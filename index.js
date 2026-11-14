@@ -1210,7 +1210,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
     });
     this.addTopBar({ icon: "iconTaskGantt", title: "任务甘特图", position: "right", callback: () => this.open() });
     this.addCommand({ langKey: "openTaskGantt", langText: "打开任务甘特图", hotkey: "", callback: () => this.open() });
-    this.addCommand({ langKey: "importTaskPlan", langText: "导入任务计划（import-plan.json）", hotkey: "", callback: () => this.importPlan() });
   }
 
   open() {
@@ -1470,80 +1469,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
     try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
     window.dispatchEvent(new CustomEvent("reminderUpdated"));
     return changed.length;
-  }
-
-  /* ----- import a task plan (storage/petal/<plugin>/import-plan.json) under an existing parent task ----- */
-  async importPlan() {
-    const host = this.getHost();
-    if (!host) { showMessage("未找到「任务笔记管理」插件", 4000, "error"); return; }
-    let plan = await this.loadData("import-plan.json");
-    if (typeof plan === "string") { try { plan = JSON.parse(plan); } catch (e) { plan = null; } }
-    if (!plan || !plan.parentId || !Array.isArray(plan.tasks)) { showMessage("未找到有效的 import-plan.json（需含 parentId 与 tasks）", 5000, "error"); return; }
-    const data = await host.loadReminderData(true);
-    const parent = data[plan.parentId];
-    if (!parent) { showMessage("父任务不存在：" + plan.parentId, 5000, "error"); return; }
-
-    // dry run: count what would be created vs. skipped (same title under the same parent)
-    let willCreate = 0, willSkip = 0;
-    const dry = (list, pid) => {
-      const byTitle = new Map();
-      if (pid) for (const x of Object.values(data)) if (x && x.parentId === pid) byTitle.set(x.title, x);
-      for (const it of list) {
-        const ex = byTitle.get(it.title);
-        if (ex) willSkip++; else willCreate++;
-        if (it.children && it.children.length) dry(it.children, ex ? ex.id : null); // existing task: still add its missing children
-      }
-    };
-    dry(plan.tasks, plan.parentId);
-    if (willCreate === 0) { showMessage(`没有需要新增的任务（${willSkip} 个同名任务已存在）`, 4000, "info"); return; }
-    sConfirm("导入任务计划", `将在「${parent.title}」下新建 ${willCreate} 个任务${willSkip ? `（${willSkip} 个同名任务已存在，跳过）` : ""}。继续？`, async () => {
-      try {
-        const r = await this.applyPlan(plan);
-        showMessage(`已新建 ${r.created} 个任务${r.skipped ? `，跳过 ${r.skipped} 个已存在的` : ""}`, 4000, "info");
-      } catch (e) { showMessage("导入失败：" + e, 6000, "error"); }
-    });
-  }
-
-  async applyPlan(plan) {
-    const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
-    const data = await host.loadReminderData(true);
-    const parent = data[plan.parentId];
-    if (!parent) throw new Error("父任务不存在");
-    await this.backupOnce(data);
-    let created = 0, skipped = 0, seq = 0;
-    const newId = () => { let id; do { id = `reminder_${Date.now() + seq++}_${Math.random().toString(36).slice(2, 11)}`; } while (data[id]); return id; };
-    const walk = (list, parentRec) => {
-      const siblings = Object.values(data).filter((x) => x && x.parentId === parentRec.id);
-      const have = new Set(siblings.map((x) => x.title));
-      let sort = siblings.reduce((m, x) => Math.max(m, Number(x.sort) || 0), 0);
-      for (const it of list) {
-        if (!it.title || (it.date && !RE_DATE.test(it.date)) || (it.endDate && !RE_DATE.test(it.endDate))) throw new Error("任务数据无效：" + JSON.stringify(it.title));
-        const existing = siblings.find((x) => x.title === it.title);
-        if (existing) { // same title already under this parent: keep it, but still add its missing children
-          skipped++;
-          if (it.children && it.children.length) walk(it.children, existing);
-          continue;
-        }
-        sort += 1000;
-        const rec = { id: newId(), parentId: parentRec.id, title: it.title, completed: false, priority: it.priority || parentRec.priority || "none",
-          projectId: parentRec.projectId, createdAt: new Date().toISOString(), kanbanStatus: parentRec.kanbanStatus || "doing", sort };
-        if (it.categoryId) rec.categoryId = it.categoryId;
-        if (it.date) rec.date = it.date;
-        if (it.endDate) rec.endDate = it.endDate;
-        if (it.note) rec.note = it.note;
-        data[rec.id] = rec;
-        created++;
-        if (it.children && it.children.length) walk(it.children, rec);
-      }
-    };
-    walk(plan.tasks, parent);
-    if (created) {
-      await host.saveReminderData(data);
-      try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
-      window.dispatchEvent(new CustomEvent("reminderUpdated"));
-    }
-    return { created, skipped };
   }
 
   async commitDates(id, startNum, endNum) {

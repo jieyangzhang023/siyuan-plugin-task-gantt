@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.5.1
+- Removed the 「导入任务计划」command (it read a local `import-plan.json` and was specific to the author's workflow).
+
 ## 0.5.0
 - Right-click a task → 「记录进度…」: log a result (text, optional progress %, backdated time), optionally append a line to the bound document. Stored in `progress-log.json`; progress is written to the host's `customProgress`. Diamond markers on the timeline, latest entries in the hover card, 「查看进度记录」 to edit/delete. Undoable (Ctrl+Z).
 

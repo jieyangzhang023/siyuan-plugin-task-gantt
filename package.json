@@ -1,6 +1,6 @@
 {
   "name": "siyuan-plugin-task-gantt",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "scripts": { "test": "node test/regression.js && node test/progress-log.js" }
 }
