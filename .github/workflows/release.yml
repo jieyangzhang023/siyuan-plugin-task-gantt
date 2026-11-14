@@ -1,0 +1,24 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches plugin.json
+        run: |
+          v=$(node -p "require('./plugin.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != plugin.json v$v"; exit 1; }
+      - name: Package
+        run: |
+          files="index.js index.css plugin.json README.md LICENSE"
+          for f in icon.png preview.png; do [ -f "$f" ] && files="$files $f"; done
+          zip package.zip $files
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: package.zip
+          generate_release_notes: true

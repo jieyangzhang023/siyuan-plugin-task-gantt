@@ -1,0 +1,31 @@
+{
+  "name": "siyuan-plugin-task-gantt",
+  "author": "jieyangzhang023",
+  "url": "https://github.com/jieyangzhang023/siyuan-plugin-task-gantt",
+  "version": "0.5.0",
+  "minAppVersion": "3.0.0",
+  "backends": [
+    "all"
+  ],
+  "frontends": [
+    "all"
+  ],
+  "displayName": {
+    "default": "Task Gantt",
+    "zh_CN": "任务甘特图"
+  },
+  "description": {
+    "default": "Gantt chart view for the Task Note Management plugin. Drag bars to reschedule.",
+    "zh_CN": "「任务笔记管理」配套甘特图：按项目分组、子任务层级、今天线，拖拽任务条即可改期"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README.md"
+  },
+  "keywords": [
+    "gantt",
+    "甘特图",
+    "task",
+    "项目管理"
+  ]
+}
