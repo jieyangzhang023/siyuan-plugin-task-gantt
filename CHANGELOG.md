@@ -2,6 +2,11 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.10.0
+- **Project page** (second top-bar icon / command 「打开项目管理」 / chart toolbar 「项目…」): overview cards per project (status, priority, progress bar, today / overdue / undated / open counts, latest result, 12-week completion sparkline, 「甘特图」 shortcut), status filter and search, a 「未分类」 card for tasks without a project.
+- Project detail: edit name, color, status (进行中 / 暂停 / 已完成), priority, dates, note inline; bind / change / unbind a document; archive or delete; stat tiles; task tree with complete checkbox, quick add, edit, log progress, add subtask, delete; results timeline across the project's tasks; 「整理这些任务…」 moves unclassified tasks into a project in one undoable step.
+- The chart's summary strip and the project cards now share one rule set (`focusKind`); a task that only has an "available from" date is no longer counted as overdue. Progress records now refresh other open pages immediately. The old project dialog in the chart is replaced by the page.
+
 ## 0.9.0
 - **The plugin is now fully standalone.** Removed everything that referred to Task Note Management: the 「切换为独立模式…」 toolbar button, the import / switch-back commands, the host data mode, and every call into the host plugin. Tasks and projects always live in this plugin's storage (`tasks.json`, `projects.json`). A fresh install starts empty. The new-document dialog remembers the notebook used last time instead of reading the host's setting. Repeating tasks can no longer be completed from the chart.
 - Existing `tasks.json` / `projects.json` (including data imported in 0.8.x) keep working unchanged.

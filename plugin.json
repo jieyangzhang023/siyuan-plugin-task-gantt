@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-task-gantt",
   "author": "jieyangzhang023",
   "url": "https://github.com/jieyangzhang023/siyuan-plugin-task-gantt",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "minAppVersion": "3.0.0",
   "backends": [
     "all"
@@ -15,8 +15,8 @@
     "zh_CN": "任务甘特图"
   },
   "description": {
-    "default": "Gantt chart for your tasks: group by project, drag to reschedule, create and bind documents, log progress.",
-    "zh_CN": "任务甘特图：按项目分组、子任务层级、今天线，拖拽改期，创建并绑定文档，记录成果；独立运行，不依赖其他插件"
+    "default": "Gantt chart and project pages for your tasks: group by project, drag to reschedule, per-project overview, progress log, bind documents. Standalone.",
+    "zh_CN": "任务甘特图与项目页：按项目分组、拖拽改期、项目总览与详情、成果时间线、绑定文档；独立运行，不依赖其他插件"
   },
   "readme": {
     "default": "README.md",

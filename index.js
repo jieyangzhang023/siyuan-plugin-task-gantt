@@ -165,6 +165,79 @@ function buildModel(reminders, projects, opts) {
   return { groups: list, projectOptions, today };
 }
 
+/* ---------- shared task rules (the chart's summary strip and the project pages must agree) ---------- */
+const TAB_P = "projects";
+const PROJECT_STATUS = [["active", "进行中"], ["paused", "暂停"], ["completed", "已完成"]];
+const PRIO_NAME = { none: "无", low: "低", medium: "中", high: "高" };
+
+// For an open leaf task: "late" (end date passed), "today" (scheduled for today, or open-ended and in progress, or due today),
+// "undated" (no date of any kind) or null. Open-ended tasks are never late.
+function focusKind(t, today) {
+  if (!t || t.completed || t.kanbanStatus === "abandoned") return null;
+  const s = toNum(t.date), e = toNum(t.endDate), doing = t.kanbanStatus === "doing";
+  if (s != null) {
+    const ranged = e != null && e >= s;
+    if (ranged && e < today) return "late";
+    return (ranged ? s <= today && e >= today : s === today || (doing && s <= today)) ? "today" : null;
+  }
+  if (e != null) return e < today ? "late" : e === today ? "today" : null;
+  if (toNum(t.availableStartDate) != null) return null;
+  return "undated";
+}
+
+// Per-project numbers for the overview cards. Only leaf tasks are counted; key "" = tasks without a project.
+// `known` (optional Set of project ids): a task pointing at a project that no longer exists counts as unclassified.
+// `hidden` = task ids kept out of today / undated (their subtasks too); overdue is never hidden.
+function projectStats(reminders, log, hidden, today, known) {
+  const all = Object.values(reminders || {}).filter((t) => t && typeof t === "object" && t.id);
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const hasKid = new Set(all.filter((t) => t.parentId).map((t) => t.parentId));
+  const hid = hidden || new Set();
+  const isHidden = (id) => { for (let c = byId.get(id), n = 0; c && n++ < 64; c = c.parentId && byId.get(c.parentId)) if (hid.has(c.id)) return true; return false; };
+  const pidOf = (t) => (t.projectId && (!known || known.has(t.projectId)) ? t.projectId : "");
+  const wk0 = alignMonday(today), out = new Map();
+  const get = (pid) => out.get(pid) || out.set(pid, { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, doing: 0, today: 0, late: 0, undated: 0, recent: 0, weekly: new Array(12).fill(0), last: null }).get(pid);
+  for (const t of all) {
+    const st = get(pidOf(t)); st.total++;
+    if (hasKid.has(t.id)) continue;
+    st.leaves++;
+    if (t.completed) {
+      st.done++;
+      const ct = toNum(String(t.completedTime || "").slice(0, 10));
+      if (ct != null) {
+        if (today - ct >= 0 && today - ct < 30) st.recent++;
+        const w = 11 - Math.floor((wk0 - alignMonday(ct)) / 7);
+        if (w >= 0 && w < 12) st.weekly[w]++;
+      }
+    } else if (t.kanbanStatus === "abandoned") st.dropped++;
+    else {
+      st.open++; if (t.kanbanStatus === "doing") st.doing++;
+      const k = focusKind(t, today);
+      if (k === "late") st.late++;
+      else if ((k === "today" || k === "undated") && !(hid.size && isHidden(t.id))) st[k]++;
+    }
+  }
+  for (const [tid, list] of Object.entries(log || {})) {
+    const t = byId.get(tid);
+    if (!t || !Array.isArray(list)) continue;
+    const st = get(pidOf(t));
+    for (const e of list) if (e && e.time && (!st.last || e.time > st.last.time)) st.last = { time: e.time, text: e.text, taskId: tid, taskTitle: t.title };
+  }
+  return out;
+}
+
+// every progress record of one project's tasks, newest first
+function projectTimeline(reminders, log, pid, limit, known) {
+  const out = [];
+  for (const [tid, list] of Object.entries(log || {})) {
+    const t = (reminders || {})[tid];
+    if (!t || (t.projectId && (!known || known.has(t.projectId)) ? t.projectId : "") !== pid || !Array.isArray(list)) continue;
+    for (const e of list) if (e && e.time) out.push({ ...e, taskId: tid, taskTitle: t.title || "" });
+  }
+  out.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
+  return limit ? out.slice(0, limit) : out;
+}
+
 /* ---------- view ---------- */
 class GanttView {
   constructor(el, plugin) {
@@ -195,6 +268,8 @@ class GanttView {
     this._onData = () => { clearTimeout(this._t); this._t = setTimeout(() => { if (!this.dragging) this.reload(); }, 250); };
     window.addEventListener("reminderUpdated", this._onData);
     window.addEventListener("projectUpdated", this._onData);
+    this._onProj = (e) => { this.project = (e && e.detail && e.detail.id) || ""; lsSet("tg-project", this.project); this.render(); }; // sent by the project page
+    window.addEventListener("tg-project", this._onProj);
     this.el.classList.add("tg");
     this.reload();
   }
@@ -202,6 +277,7 @@ class GanttView {
   destroy() {
     window.removeEventListener("reminderUpdated", this._onData);
     window.removeEventListener("projectUpdated", this._onData);
+    window.removeEventListener("tg-project", this._onProj);
     window.removeEventListener("keydown", this._onKey);
     window.removeEventListener("pointerdown", this._onDown, true);
     clearTimeout(this._t); clearTimeout(this._tt); clearTimeout(this._qt);
@@ -425,7 +501,7 @@ class GanttView {
     const legend = h("span", { class: "tg-legend" }, [["open", "未完成"], ["done", "已完成"], ["late", "超期（红色延伸段）"], ["dropped", "已放弃"]].map(([k, t]) =>
       h("span", { class: "tg-lg" }, h("i", { class: k === "late" ? "tg-lgl" : "", style: `background-color:${STATE_COLOR[k]}` }), t)));
     const addBtn = h("button", { class: "b3-button b3-button--text", onclick: () => this.openCreate({}) }, "＋ 新建任务");
-    const projBtn = h("button", { class: "b3-button b3-button--outline", title: "新建、改名、改颜色、删除项目", onclick: () => this.openProjects() }, "项目…");
+    const projBtn = h("button", { class: "b3-button b3-button--outline", title: "打开项目管理页", onclick: () => this.plugin.openProjects() }, "项目…");
     return h("div", { class: "tg-bar" }, addBtn, search, sortSel, projSel, statusSel, doneSel, zoomBtns, und, today, foldBtn, undoBtn, refresh, projBtn, legend, info);
   }
 
@@ -445,14 +521,10 @@ class GanttView {
       n.children.forEach(walk);
       const t = n.t;
       if (hasKid.has(n.id) || t.completed || t.kanbanStatus === "abandoned") return;
-      if (this.stateOf(n) === "late") { late.push(n); return; }
-      const doing = t.kanbanStatus === "doing";
-      let isToday = false;
-      if (hid.size && isHidden(n.id)) return; // overdue is checked above and is never hidden
-      if (n.kind === "own") isToday = n.noEnd ? n.start === today || (doing && n.start <= today) : n.start <= today && n.end >= today;
-      else if (n.kind === "deadline") isToday = n.end === today;
-      else if (!n.kind) { undated.push(n); return; }
-      if (isToday) due.push(n);
+      const k = focusKind(t, today);
+      if (k === "late") { late.push(n); return; }
+      if (hid.size && isHidden(n.id)) return; // overdue is never hidden
+      if (k === "today") due.push(n); else if (k === "undated") undated.push(n);
     };
     this.model.groups.forEach((g) => g.roots.forEach(walk));
     const pr = { high: 0, medium: 1, low: 2 };
@@ -1140,42 +1212,6 @@ class GanttView {
     } catch (err) { showMessage("操作失败：" + err, 5000, "error"); }
   }
 
-  // project manager (own store): rename / recolor in place, add, delete (its tasks become 未分类)
-  openProjects() {
-    const body = h("div", { class: "tg-plist2" });
-    const dlg = new Dialog({ title: "项目管理", width: "520px", content: `<div class="b3-dialog__content tg-form"></div><div class="b3-dialog__action"></div>` });
-    dlg.element.querySelector(".tg-form").append(body);
-    const bClose = h("button", { class: "b3-button b3-button--cancel" }, "关闭");
-    bClose.addEventListener("click", () => dlg.destroy());
-    dlg.element.querySelector(".b3-dialog__action").append(bClose);
-    const fail = (e) => showMessage("操作失败：" + e, 5000, "error");
-    const draw = () => {
-      const entries = Object.entries(this.projects || {}).filter(([k, p]) => !k.startsWith("_") && p && typeof p === "object" && p.id)
-        .sort((a, b) => (Number(a[1].sort) || 0) - (Number(b[1].sort) || 0) || String(a[1].title).localeCompare(String(b[1].title)));
-      const count = (id) => Object.values(this.reminders || {}).filter((t) => t && t.projectId === id).length;
-      const rows = entries.map(([id, p]) => {
-        const name = h("input", { class: "b3-text-field", type: "text", value: p.title || "" });
-        const color = h("input", { type: "color", value: /^#[0-9a-fA-F]{6}$/.test(p.color || "") ? p.color : "#3b82f6", class: "tg-colorin" });
-        const save = async () => { try { await this.plugin.saveProject({ id, title: name.value, color: color.value }); await this.reload(); draw(); } catch (e) { fail(e); } };
-        name.addEventListener("change", save); color.addEventListener("change", save);
-        const del = h("button", { class: "b3-button b3-button--outline" }, "删除");
-        del.addEventListener("click", () => sConfirm("删除项目", `删除项目「${p.title}」？它的 ${count(id)} 个任务不会被删除，会变成「未分类」。`, async () => {
-          try { await this.plugin.deleteProject(id); await this.reload(); draw(); } catch (e) { fail(e); }
-        }));
-        return h("div", { class: "tg-prow" }, color, name, h("span", { class: "tg-meta" }, `${count(id)} 个任务`), del);
-      });
-      const nn = h("input", { class: "b3-text-field", type: "text", placeholder: "新项目名称" });
-      const nc = h("input", { type: "color", value: "#3b82f6", class: "tg-colorin" });
-      const add = h("button", { class: "b3-button b3-button--text" }, "＋ 新建");
-      const create = async () => { if (!nn.value.trim()) { nn.focus(); return; } try { await this.plugin.saveProject({ title: nn.value, color: nc.value }); await this.reload(); draw(); } catch (e) { fail(e); } };
-      add.addEventListener("click", create);
-      nn.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); create(); } });
-      body.replaceChildren(...(rows.length ? rows : [h("div", { class: "tg-empty" }, "还没有项目")]), h("div", { class: "tg-prow tg-pnew" }, nc, nn, add));
-    };
-    draw();
-    return { draw, body };
-  }
-
   deleteTask(t) {
     const n = this.plugin.descendantsOf(this.reminders, t.id).length;
     sConfirm("删除任务", `删除「${t.title}」${n ? `及其 ${n} 个子任务` : ""}？其成果记录一并删除。可用 Ctrl+Z 撤销。`, async () => {
@@ -1387,6 +1423,385 @@ class GanttView {
   }
 }
 
+/* ---------- project overview / detail page ---------- */
+const WEEKDAY = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const FILTERS = [["open", "全部"], ["active", "进行中"], ["paused", "暂停"], ["completed", "已完成"], ["archived", "已归档"]];
+const TASK_STATUS = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃" };
+
+class ProjectsView {
+  constructor(el, plugin) {
+    this.el = el;
+    this.plugin = plugin;
+    this.sel = lsGet("tp-sel", ""); // "" = overview, "__none" = tasks without a project, else a project id
+    this.filter = FILTERS.some(([k]) => k === lsGet("tp-filter", "open")) ? lsGet("tp-filter", "open") : "open";
+    this.q = "";
+    this.showDone = lsGet("tp-showdone", "0") === "1";
+    this.fold = new Set();
+    this.reminders = {}; this.projects = {}; this.stats = new Map();
+    this.model = { today: todayNum(), projectOptions: [], groups: [] }; // the shared dialogs read these
+    this.project = "";
+    this.toast = h("div", { class: "tg-toast", style: "display:none" });
+    this.active = false;
+    this._onKey = (e) => this.onKey(e);
+    this._onDown = (e) => { this.active = this.el.contains(e.target); };
+    window.addEventListener("keydown", this._onKey);
+    window.addEventListener("pointerdown", this._onDown, true);
+    this._onData = () => { clearTimeout(this._t); this._t = setTimeout(() => this.reload(), 250); };
+    window.addEventListener("reminderUpdated", this._onData);
+    window.addEventListener("projectUpdated", this._onData);
+    this.el.classList.add("tp");
+    this.reload();
+  }
+
+  destroy() {
+    window.removeEventListener("reminderUpdated", this._onData);
+    window.removeEventListener("projectUpdated", this._onData);
+    window.removeEventListener("keydown", this._onKey);
+    window.removeEventListener("pointerdown", this._onDown, true);
+    clearTimeout(this._t); clearTimeout(this._tt);
+  }
+
+  get host() { return this.plugin.getHost(); }
+
+  async reload() {
+    try {
+      this.reminders = await this.host.loadReminderData(true);
+      this.projects = await this.host.loadProjectData(true);
+      await this.plugin.loadLog();
+      await this.plugin.loadHidden();
+    } catch (e) {
+      this.el.replaceChildren(h("div", { class: "tg-empty" }, "读取任务数据失败：" + e));
+      return;
+    }
+    this.render();
+  }
+
+  // the real projects, in their saved order
+  projectList() {
+    return Object.entries(this.projects || {}).filter(([k, p]) => !k.startsWith("_") && p && typeof p === "object" && p.id)
+      .map(([, p]) => p).sort((a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0) || String(a.title).localeCompare(String(b.title)));
+  }
+
+  statusOf(p) { return p.archived ? "archived" : PROJECT_STATUS.some(([k]) => k === p.status) ? p.status : "active"; }
+
+  render() {
+    const today = todayNum();
+    this.model = { today, projectOptions: this.projectList().filter((p) => !p.archived).map((p) => ({ id: p.id, title: p.title || p.id })), groups: [] };
+    this.stats = projectStats(this.reminders, this.plugin.log, this.plugin.hidden, today, new Set(this.projectList().map((p) => p.id)));
+    const prev = this.scroller ? this.scroller.scrollTop : 0;
+    const detail = this.sel && (this.sel === "__none" || this.projects[this.sel]);
+    if (this.sel && !detail) { this.sel = ""; lsSet("tp-sel", ""); }
+    this.project = this.sel === "__none" ? "" : this.sel;
+    const body = h("div", { class: "tp-scroll" }, detail ? this.renderDetail() : this.renderOverview());
+    this.scroller = body;
+    this.el.replaceChildren(this.renderHeader(!!detail), body, this.toast);
+    body.scrollTop = prev;
+    if (this._refocusAdd) { this._refocusAdd = false; const i = this.el.querySelector && this.el.querySelector(".tp-add"); if (i && i.focus) i.focus(); }
+  }
+
+  /* ----- shared bits ----- */
+  open(id) { this.sel = id; lsSet("tp-sel", id); this.scroller = null; this.render(); }
+
+  viewInGantt(id) {
+    lsSet("tg-project", id || "");
+    this.plugin.open();
+    setTimeout(() => window.dispatchEvent(Object.assign(new CustomEvent("tg-project"), { detail: { id: id || "" } })), 60);
+  }
+
+  pill(text, cls) { return h("span", { class: "tp-pill " + (cls || "") }, text); }
+
+  renderHeader(detail) {
+    if (detail) {
+      const none = this.sel === "__none", p = none ? null : this.projects[this.sel];
+      return h("div", { class: "tp-bar" },
+        h("button", { class: "b3-button b3-button--outline", onclick: () => this.open("") }, "← 全部项目"),
+        h("span", { class: "tp-dot", style: `background:${none ? "#8a8f98" : p.color || "#3b82f6"}` }),
+        h("b", { class: "tp-crumb" }, none ? "未分类" : p.title),
+        h("span", { class: "fn__flex-1" }),
+        h("button", { class: "b3-button b3-button--outline", onclick: () => this.viewInGantt(none ? "" : this.sel) }, "在甘特图中查看"),
+        h("button", { class: "b3-button b3-button--outline", disabled: !this.plugin.undoStack.length, onclick: () => this.undo() }, "撤销"));
+    }
+    const search = h("input", { class: "b3-text-field tp-search", type: "text", placeholder: "搜索项目", value: this.q });
+    let comp = false;
+    const apply = () => { this.q = search.value; clearTimeout(this._qt); this._qt = setTimeout(() => { this.render(); const i = this.el.querySelector && this.el.querySelector(".tp-search"); if (i && i.focus) { i.focus(); try { i.setSelectionRange(i.value.length, i.value.length); } catch (e) { /* ignore */ } } }, 200); };
+    search.addEventListener("compositionstart", () => { comp = true; });
+    search.addEventListener("compositionend", () => { comp = false; apply(); });
+    search.addEventListener("input", () => { if (!comp) apply(); });
+    const chips = h("div", { class: "tg-seg" }, FILTERS.map(([k, t]) => h("button", { class: "b3-button b3-button--outline" + (k === this.filter ? " tg-on" : ""), onclick: () => { this.filter = k; lsSet("tp-filter", k); this.render(); } }, t)));
+    return h("div", { class: "tp-bar" }, h("b", { class: "tp-title" }, "项目"), search, chips, h("span", { class: "fn__flex-1" }),
+      h("button", { class: "b3-button b3-button--outline", disabled: !this.plugin.undoStack.length, onclick: () => this.undo() }, "撤销"),
+      h("button", { class: "b3-button b3-button--text", onclick: () => this.openNewProject() }, "＋ 新建项目"));
+  }
+
+  /* ----- overview: one card per project ----- */
+  renderOverview() {
+    const q = this.q.trim().toLowerCase();
+    const list = this.projectList().filter((p) => {
+      const st = this.statusOf(p);
+      if (this.filter === "open" ? st === "archived" : st !== this.filter) return false;
+      return !q || String(p.title || "").toLowerCase().includes(q);
+    });
+    const none = this.stats.get("");
+    const cards = list.map((p) => this.card(p));
+    if (none && none.total && (this.filter === "open") && !q) cards.push(this.card({ id: "__none", title: "未分类", color: "#8a8f98", virtual: true }));
+    if (!cards.length) {
+      return h("div", { class: "tp-empty" }, h("div", { class: "tp-empty-t" }, this.projectList().length ? "没有符合条件的项目" : "还没有项目"),
+        h("div", null, this.projectList().length ? "换个筛选条件，或清空搜索。" : "项目用来把任务分组。先建一个，再到甘特图里添加任务。"),
+        this.projectList().length ? null : h("button", { class: "b3-button b3-button--text", onclick: () => this.openNewProject() }, "＋ 新建项目"));
+    }
+    return h("div", { class: "tp-grid" }, cards);
+  }
+
+  spark(weekly, color) {
+    const max = Math.max(1, ...weekly);
+    return h("div", { class: "tp-spark", title: "近 12 周每周完成的任务数" }, weekly.map((v, i) => h("i", { style: `height:${Math.max(v ? 14 : 5, Math.round((v / max) * 100))}%;background:${color};opacity:${v ? 0.35 + 0.65 * (i / 11) : 0.12}` })));
+  }
+
+  card(p) {
+    const real = !p.virtual, st = this.stats.get(real ? p.id : "") || { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, today: 0, late: 0, undated: 0, recent: 0, weekly: new Array(12).fill(0), last: null };
+    const denom = st.leaves - st.dropped, pct = denom > 0 ? Math.round((st.done / denom) * 100) : 0;
+    const color = p.color || "#3b82f6", status = real ? this.statusOf(p) : "";
+    const stat = (n, label, cls) => h("div", { class: "tp-stat " + (cls || "") + (n ? "" : " tp-zero") }, h("b", null, String(n)), h("span", null, label));
+    const dates = real && (p.startDate || p.endDate) ? `${p.startDate ? p.startDate.slice(5) : "…"} ~ ${p.endDate ? p.endDate.slice(5) : "进行中"}` : "";
+    const last = st.last ? h("div", { class: "tp-last", title: st.last.text }, h("span", { class: "tp-lastk" }, `最近成果 ${st.last.time.slice(5, 10)}`), " " + String(st.last.text).replace(/\s+/g, " ").slice(0, 46))
+      : h("div", { class: "tp-last tp-dim" }, st.recent ? `近 30 天完成 ${st.recent} 个任务` : "近 30 天没有完成任务");
+    const el = h("div", { class: "tp-card" + (status === "archived" ? " tp-arch" : ""), style: `--pc:${color}`, onclick: () => this.open(p.id) },
+      h("div", { class: "tp-ch" }, h("span", { class: "tp-ct" }, p.title || "(未命名)"),
+        real ? this.pill(PROJECT_STATUS.concat([["archived", "已归档"]]).find(([k]) => k === status)[1], "tp-s-" + status) : null,
+        real && p.priority && p.priority !== "none" ? this.pill(PRIO_NAME[p.priority], "tp-p-" + p.priority) : null),
+      h("div", { class: "tp-prog" }, h("div", { class: "tp-bar2" }, h("i", { style: `width:${pct}%` })), h("span", { class: "tp-pct" }, `${pct}%`), h("span", { class: "tp-dim" }, `${st.done} / ${denom} 个任务`)),
+      h("div", { class: "tp-stats" }, stat(st.today, "今日"), stat(st.late, "超期", st.late ? "tp-red" : ""), stat(st.undated, "未排期"), stat(st.open, "未完成")),
+      last,
+      h("div", { class: "tp-cf" }, dates ? h("span", { class: "tp-dim" }, dates) : null, h("span", { class: "fn__flex-1" }), this.spark(st.weekly, color),
+        h("button", { class: "b3-button b3-button--outline tp-mini", title: "在甘特图中只看这个项目", onclick: (e) => { e.stopPropagation(); this.viewInGantt(real ? p.id : ""); } }, "甘特图")));
+    return el;
+  }
+
+  /* ----- detail ----- */
+  pidOf(t) { const p = t.projectId && this.projects[t.projectId]; return p && typeof p === "object" ? t.projectId : ""; }
+
+  tasksOf(pid) { return Object.values(this.reminders).filter((t) => t && t.id && this.pidOf(t) === pid); }
+
+  renderDetail() {
+    const none = this.sel === "__none", pid = none ? "" : this.sel, p = none ? { id: "", title: "未分类", color: "#8a8f98", virtual: true } : this.projects[pid];
+    const st = this.stats.get(pid) || { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, today: 0, late: 0, undated: 0, recent: 0, weekly: new Array(12).fill(0), last: null };
+    const denom = st.leaves - st.dropped, pct = denom > 0 ? Math.round((st.done / denom) * 100) : 0, color = p.color || "#3b82f6";
+    const tile = (n, label, cls) => h("div", { class: "tp-tile " + (cls || "") }, h("b", null, String(n)), h("span", null, label));
+    const stats = h("div", { class: "tp-tiles" },
+      h("div", { class: "tp-tile tp-big", style: `--pc:${color}` }, h("b", null, `${pct}%`), h("span", null, `完成 ${st.done} / ${denom}`), h("div", { class: "tp-bar2" }, h("i", { style: `width:${pct}%` }))),
+      tile(st.today, "今日"), tile(st.late, "超期", st.late ? "tp-red" : ""), tile(st.undated, "未排期"), tile(st.recent, "近 30 天完成"),
+      h("div", { class: "tp-tile tp-wide" }, this.spark(st.weekly, color), h("span", null, "近 12 周完成")));
+    return h("div", { class: "tp-detail" }, none ? this.noneInfo(st) : this.infoCard(p), stats,
+      h("div", { class: "tp-cols" }, this.taskPanel(pid, p), this.timelinePanel(pid)));
+  }
+
+  noneInfo(st) {
+    return h("div", { class: "tp-info" }, h("div", { class: "tp-dim" }, `有 ${st.total} 个任务还没有归入任何项目。`),
+      h("button", { class: "b3-button b3-button--text", disabled: !this.projectList().filter((p) => !p.archived).length, onclick: () => this.openAssign() }, "整理这些任务…"));
+  }
+
+  infoCard(p) {
+    const save = async (patch) => { try { await this.plugin.updateProject(p.id, patch); await this.reload(); } catch (e) { showMessage("保存失败：" + e, 4000, "error"); this.render(); } };
+    const sel = (opts, cur, on) => { const s = h("select", { class: "b3-select" }, opts.map(([v, t]) => h("option", { value: v, selected: v === cur }, t))); s.addEventListener("change", () => on(s.value)); return s; };
+    const name = h("input", { class: "b3-text-field tp-name", type: "text", value: p.title || "" });
+    name.addEventListener("change", () => save({ title: name.value }));
+    const color = h("input", { type: "color", class: "tg-colorin", value: /^#[0-9a-fA-F]{6}$/.test(p.color || "") ? p.color : "#3b82f6", title: "项目颜色" });
+    color.addEventListener("change", () => save({ color: color.value }));
+    const date = (k) => { const i = h("input", { class: "b3-text-field", type: "date", value: p[k] || "" }); i.addEventListener("change", () => save({ [k]: i.value })); return i; };
+    const note = h("textarea", { class: "b3-text-field fn__block tp-note", rows: "3", placeholder: "项目说明、目标、背景…（失去焦点自动保存）" });
+    note.value = p.note || "";
+    note.addEventListener("change", () => save({ note: note.value }));
+    const st = this.statusOf(p);
+    const field = (k, c) => h("label", { class: "tp-f" }, h("span", null, k), c);
+    const docChip = this.docChip(p);
+    const more = h("button", { class: "b3-button b3-button--outline", title: "归档 / 删除", onclick: (e) => this.projectMenu(e, p) }, "⋯");
+    return h("div", { class: "tp-info" },
+      h("div", { class: "tp-row1" }, color, name, sel(PROJECT_STATUS, st === "archived" ? p.status || "active" : st, (v) => save({ status: v })), sel(Object.entries(PRIO_NAME).map(([k, t]) => [k, k === "none" ? "优先级：无" : "优先级：" + t]), p.priority || "none", (v) => save({ priority: v })), st === "archived" ? this.pill("已归档", "tp-s-archived") : null, more),
+      h("div", { class: "tp-row2" }, field("开始", date("startDate")), field("结束", date("endDate")), field("文档", docChip)),
+      note);
+  }
+
+  docChip(p) {
+    const save = async (patch) => { try { await this.plugin.updateProject(p.id, patch); await this.reload(); } catch (e) { showMessage("保存失败：" + e, 4000, "error"); } };
+    if (!p.blockId) return h("button", { class: "b3-button b3-button--outline", onclick: () => this.openBindDoc(p) }, "绑定文档…");
+    const open = h("button", { class: "b3-button b3-button--outline tp-doc", title: "打开绑定的文档", onclick: async () => {
+      if ((await this.plugin.blockExists(p.blockId)) === false) { showMessage("绑定的文档已被删除，请重新绑定或解除", 4000, "info"); return; }
+      try { openTab({ app: this.plugin.app, doc: { id: p.blockId } }); } catch (e) { showMessage("打开失败：" + e, 4000, "error"); }
+    } }, p.blockTitle || "已绑定文档");
+    return h("span", { class: "tp-docs" }, open, h("button", { class: "b3-button b3-button--outline", title: "换一个文档", onclick: () => this.openBindDoc(p) }, "更换"), h("button", { class: "b3-button b3-button--outline", title: "解除绑定", onclick: () => save({ blockId: "" }) }, "×"));
+  }
+
+  projectMenu(ev, p) {
+    const menu = new Menu("task-gantt-proj");
+    const archived = !!p.archived;
+    menu.addItem({ icon: "iconArchive", label: archived ? "取消归档" : "归档项目", click: async () => { try { await this.plugin.updateProject(p.id, { archived: !archived }); this.say(archived ? "已取消归档" : "已归档，可在筛选「已归档」里找到", false); await this.reload(); } catch (e) { showMessage("操作失败：" + e, 4000, "error"); } } });
+    menu.addSeparator();
+    const n = this.tasksOf(p.id).length;
+    menu.addItem({ icon: "iconTrashcan", label: "删除项目…", click: () => sConfirm("删除项目", `删除项目「${p.title}」？它的 ${n} 个任务不会被删除，会变成「未分类」。`, async () => {
+      try { await this.plugin.deleteProject(p.id); this.sel = ""; lsSet("tp-sel", ""); await this.reload(); this.say("已删除项目", false); } catch (e) { showMessage("删除失败：" + e, 5000, "error"); }
+    }) });
+    menu.open({ x: ev.clientX, y: ev.clientY });
+  }
+
+  /* ----- tasks of the project ----- */
+  fmtWhen(t) {
+    const s = toNum(t.date), e = toNum(t.endDate), md = (d) => fromNum(d).slice(5);
+    if (s != null) return e != null && e > s ? `${md(s)} ~ ${md(e)}` : md(s) + (e == null && t.kanbanStatus === "doing" ? " 起" : "");
+    if (e != null) return `截止 ${md(e)}`;
+    return "未排期";
+  }
+
+  nodeFor(t) {
+    const kids = this.tasksOf(this.pidOf(t)).filter((x) => x.parentId === t.id);
+    const cp = Number(t.customProgress);
+    return { id: t.id, t, children: kids, progress: t.completed ? 1 : Number.isFinite(cp) && cp > 0 ? Math.min(cp, 100) / 100 : 0 };
+  }
+
+  taskPanel(pid, p) {
+    const today = this.model.today, all = this.tasksOf(pid), ids = new Set(all.map((t) => t.id));
+    const kids = new Map();
+    for (const t of all) { const k = ids.has(t.parentId) ? t.parentId : ""; (kids.get(k) || kids.set(k, []).get(k)).push(t); }
+    for (const l of kids.values()) l.sort((a, b) => (a.completed ? 1 : 0) - (b.completed ? 1 : 0) || (Number(a.sort) || 0) - (Number(b.sort) || 0) || String(a.title).localeCompare(String(b.title)));
+    const hid = this.plugin.hidden || new Set();
+    const alive = (t) => !t.completed || [...(kids.get(t.id) || [])].some(alive); // a finished parent stays visible while it still has open work
+    const visible = (t) => this.showDone || alive(t);
+    const rows = []; const seen = new Set();
+    const walk = (t, d) => {
+      if (seen.has(t.id) || !visible(t)) return;
+      seen.add(t.id);
+      const sub = (kids.get(t.id) || []).filter(visible), folded = this.fold.has(t.id);
+      rows.push(this.taskRow(t, d, sub.length, folded, today, hid));
+      if (!folded) sub.forEach((c) => walk(c, d + 1));
+    };
+    (kids.get("") || []).forEach((t) => walk(t, 0));
+    const nDone = all.filter((t) => t.completed).length;
+    const add = h("input", { class: "b3-text-field tp-add", type: "text", placeholder: pid || this.sel !== "__none" ? "＋ 添加任务到此项目，回车创建（日期为今天）" : "＋ 添加未分类任务，回车创建（日期为今天）" });
+    let comp = false;
+    add.addEventListener("compositionstart", () => { comp = true; });
+    add.addEventListener("compositionend", () => { comp = false; });
+    add.addEventListener("keydown", async (e) => {
+      if (e.isComposing || comp || e.key !== "Enter") return;
+      e.preventDefault();
+      const title = add.value.trim();
+      if (!title) return;
+      add.value = "";
+      try { await this.plugin.createTask({ title, date: fromNum(this.model.today), projectId: pid }); this._refocusAdd = true; this.say(`已新建「${title}」（今天）`, true); await this.reload(); } catch (err) { add.value = title; showMessage("新建失败：" + err, 5000, "error"); }
+    });
+    const doneSw = h("label", { class: "tg-chk" }, h("input", { type: "checkbox", class: "b3-switch", checked: this.showDone, onchange: (e) => { this.showDone = e.target.checked; lsSet("tp-showdone", this.showDone ? "1" : "0"); this.render(); } }), `显示已完成（${nDone}）`);
+    const full = h("button", { class: "b3-button b3-button--outline", onclick: () => this.openCreate({ projectId: pid }) }, "新建…");
+    return h("div", { class: "tp-panel" }, h("div", { class: "tp-ph" }, h("b", null, "任务"), h("span", { class: "fn__flex-1" }), doneSw, full), add,
+      h("div", { class: "tp-tasks" }, rows.length ? rows : h("div", { class: "tp-dim tp-none" }, all.length ? "没有未完成的任务。" : "这里还没有任务。在上面输入标题回车即可添加。")));
+  }
+
+  taskRow(t, depth, nSub, folded, today, hid) {
+    const kind = focusKind(t, today);
+    const badge = t.completed ? null : kind === "late" ? this.pill(`超期 ${today - toNum(t.endDate)} 天`, "tp-b-late") : kind === "today" ? this.pill("今日", "tp-b-today") : null;
+    const tog = nSub ? h("span", { class: "tg-tog", onclick: () => { folded ? this.fold.delete(t.id) : this.fold.add(t.id); this.render(); } }, folded ? "▸" : "▾") : h("span", { class: "tg-tog" });
+    const box = h("input", { type: "checkbox", class: "tp-chk", checked: !!t.completed, title: t.completed ? "取消完成" : "标记完成" });
+    box.addEventListener("click", (e) => { e.preventDefault(); this.toggleDone(t).then(() => this.reload()); });
+    const act = (label, title, fn) => h("button", { class: "tp-act", title, onclick: (e) => { e.stopPropagation(); fn(); } }, label);
+    const prog = this.plugin.progressOf(t.id).length;
+    return h("div", { class: "tp-row" + (t.completed ? " tp-done" : ""), style: `padding-left:${8 + depth * 18}px`, "data-id": t.id },
+      tog, box,
+      h("span", { class: "tp-rt", title: "编辑任务", onclick: () => this.editTask(t) }, t.title || "(无标题)"),
+      hid.has(t.id) ? this.pill("已隐藏", "tp-dim-pill") : null,
+      TASK_STATUS[t.kanbanStatus] && t.kanbanStatus !== "doing" ? this.pill(TASK_STATUS[t.kanbanStatus], "tp-b-st") : null,
+      badge, prog ? h("span", { class: "tp-dim", title: "成果记录条数" }, `◆${prog}`) : null,
+      h("span", { class: "fn__flex-1" }),
+      h("span", { class: "tp-when" + (kind === "late" ? " tp-red" : "") }, this.fmtWhen(t)),
+      h("span", { class: "tp-acts" }, act("记录", "记录进度", () => this.openProgress(this.nodeFor(t))), act("＋子", "新建子任务", () => this.openCreate({ parentId: t.id })), act("删除", "删除任务", () => this.deleteTask(t))));
+  }
+
+  /* ----- results timeline ----- */
+  timelinePanel(pid) {
+    const items = projectTimeline(this.reminders, this.plugin.log, pid, 60, new Set(this.projectList().map((p) => p.id)));
+    const groups = [];
+    for (const e of items) { const d = e.time.slice(0, 10); if (!groups.length || groups[groups.length - 1].d !== d) groups.push({ d, list: [] }); groups[groups.length - 1].list.push(e); }
+    const head = (d) => { const n = toNum(d); return n == null ? d : `${d.slice(5)}　${WEEKDAY[wday(n)]}`; };
+    return h("div", { class: "tp-panel" }, h("div", { class: "tp-ph" }, h("b", null, "成果时间线"), h("span", { class: "tp-dim" }, items.length ? `最近 ${items.length} 条` : "")),
+      h("div", { class: "tp-tl" }, groups.length ? groups.map((g) => h("div", { class: "tp-day" }, h("div", { class: "tp-dayh" }, head(g.d)),
+        g.list.map((e) => h("div", { class: "tp-ev" }, h("span", { class: "tp-evt" }, e.time.slice(11)),
+          h("div", { class: "tp-evb" }, h("div", null, h("span", { class: "tp-evk", title: "查看这个任务的全部记录", onclick: () => { const t = this.reminders[e.taskId]; if (t) this.openProgressList(this.nodeFor(t)); } }, e.taskTitle), e.progress != null ? this.pill(e.progress + "%", "tp-b-today") : null),
+            h("div", { class: "tp-evx" }, e.text)))))) : h("div", { class: "tp-dim tp-none" }, "还没有成果记录。在任务上点「记录」，这里会按时间汇总，写周报时一目了然。")));
+  }
+
+  /* ----- dialogs ----- */
+  openNewProject() {
+    const name = h("input", { class: "b3-text-field fn__block", type: "text", placeholder: "项目名称" });
+    const color = h("input", { type: "color", class: "tg-colorin", value: ["#3b82f6", "#22a05a", "#f5a524", "#9b59b6", "#e5484d", "#14b8a6"][this.projectList().length % 6] });
+    const note = h("textarea", { class: "b3-text-field fn__block", rows: "3", placeholder: "项目说明（可选）" });
+    const row = (k, c) => h("label", { class: "tg-frow" }, h("span", null, k), c);
+    const dlg = new Dialog({ title: "新建项目", width: "440px", content: `<div class="b3-dialog__content tg-form"></div><div class="b3-dialog__action"></div>` });
+    dlg.element.querySelector(".tg-form").append(row("名称", name), row("颜色", color), row("说明", note));
+    const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消"), bOk = h("button", { class: "b3-button b3-button--text" }, "创建");
+    dlg.element.querySelector(".b3-dialog__action").append(bCancel, h("div", { class: "fn__space" }), bOk);
+    let busy = false;
+    const submit = async () => {
+      if (busy) return;
+      if (!name.value.trim()) { name.focus(); return; }
+      busy = true;
+      try { const id = await this.plugin.saveProject({ title: name.value, color: color.value, note: note.value }); dlg.destroy(); await this.reload(); this.open(id); } catch (e) { busy = false; showMessage("创建失败：" + e, 5000, "error"); }
+    };
+    bCancel.addEventListener("click", () => dlg.destroy()); bOk.addEventListener("click", submit);
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); } });
+    setTimeout(() => name.focus(), 50);
+    return { ctl: { name, color, note }, submit };
+  }
+
+  // tasks with no project: tick some, pick the project they go to
+  openAssign() {
+    const targets = this.projectList().filter((p) => !p.archived);
+    const roots = this.tasksOf("").filter((t) => !t.parentId || !this.reminders[t.parentId] || this.pidOf(this.reminders[t.parentId]) !== "").sort((a, b) => (a.completed ? 1 : 0) - (b.completed ? 1 : 0) || String(a.title).localeCompare(String(b.title)));
+    const dest = h("select", { class: "b3-select fn__block" }, targets.map((p) => h("option", { value: p.id }, p.title)));
+    const boxes = roots.map((t) => ({ t, el: h("input", { type: "checkbox", class: "b3-switch", checked: !t.completed }) }));
+    const list = h("div", { class: "tp-assign" }, boxes.map(({ t, el }) => h("label", { class: "tp-arow" }, el, h("span", { class: t.completed ? "tp-dim" : "" }, t.title || "(无标题)"), h("span", { class: "tp-dim" }, this.fmtWhen(t)))));
+    const dlg = new Dialog({ title: "整理未分类任务", width: "520px", content: `<div class="b3-dialog__content tg-form"></div><div class="b3-dialog__action"></div>` });
+    dlg.element.querySelector(".tg-form").append(h("div", { class: "tg-frow" }, h("span", null, "归入项目（子任务一起移动）"), dest), list);
+    const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消"), bOk = h("button", { class: "b3-button b3-button--text" }, "归入");
+    dlg.element.querySelector(".b3-dialog__action").append(bCancel, h("div", { class: "fn__space" }), bOk);
+    let busy = false;
+    const submit = async () => {
+      if (busy) return;
+      const pick = boxes.filter((b) => b.el.checked).map((b) => b.t.id);
+      if (!pick.length) { showMessage("请先勾选任务", 3000, "info"); return; }
+      busy = true;
+      try { const n = await this.plugin.assignProject(pick, dest.value); dlg.destroy(); this.say(`已归类 ${n} 个任务`, true); await this.reload(); } catch (e) { busy = false; showMessage("归类失败：" + e, 5000, "error"); }
+    };
+    bCancel.addEventListener("click", () => dlg.destroy()); bOk.addEventListener("click", submit);
+    return { ctl: { dest, boxes }, submit };
+  }
+
+  // pick the document that describes this project (shown on the page, and offered first when creating a task document)
+  async openBindDoc(p) {
+    let notebooks;
+    try { notebooks = await this.plugin.listNotebooks(); } catch (e) { showMessage("读取笔记本失败：" + e, 5000, "error"); return; }
+    if (!notebooks.length) { showMessage("没有已打开的笔记本", 4000, "error"); return; }
+    const nb = new Map(notebooks.map((n) => [n.id, n.name]));
+    const q = h("input", { class: "b3-text-field fn__block", type: "text", placeholder: "搜索文档，输入路径或标题中的关键字" });
+    const list = h("select", { class: "b3-select fn__block tg-plist", size: "8" });
+    let rows = [], token = 0, timer = null, comp = false;
+    const fill = () => list.replaceChildren(...rows.map((r) => h("option", { value: r.id }, `${nb.get(r.box) || ""}${r.hpath}`)));
+    const search = async () => { const my = ++token; try { const found = await this.plugin.searchDocs(q.value, notebooks); if (my !== token) return; rows = found; } catch (e) { showMessage("搜索失败：" + e, 4000, "error"); return; } fill(); };
+    const kick = () => { clearTimeout(timer); timer = setTimeout(search, 200); };
+    q.addEventListener("compositionstart", () => { comp = true; }); q.addEventListener("compositionend", () => { comp = false; kick(); }); q.addEventListener("input", () => { if (!comp) kick(); });
+    const dlg = new Dialog({ title: `绑定文档：${p.title}`, width: "560px", content: `<div class="b3-dialog__content tg-form"></div><div class="b3-dialog__action"></div>` });
+    dlg.element.querySelector(".tg-form").append(h("div", { class: "tg-frow" }, h("span", null, "选择文档"), q, list));
+    const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消"), bOk = h("button", { class: "b3-button b3-button--text" }, "绑定");
+    dlg.element.querySelector(".b3-dialog__action").append(bCancel, h("div", { class: "fn__space" }), bOk);
+    const submit = async () => {
+      const r = rows.find((x) => x.id === list.value);
+      if (!r) { showMessage("请先选择文档", 3000, "info"); return; }
+      try { await this.plugin.updateProject(p.id, { blockId: r.id, blockTitle: r.hpath.split("/").filter(Boolean).pop() || r.hpath }); dlg.destroy(); await this.reload(); } catch (e) { showMessage("绑定失败：" + e, 5000, "error"); }
+    };
+    bCancel.addEventListener("click", () => dlg.destroy()); bOk.addEventListener("click", submit);
+    search();
+    return { ctl: { q, list }, submit, get rows() { return rows; } };
+  }
+}
+
+// the dialogs, undo toast and task actions are the chart's own; the project page borrows them instead of keeping a second copy
+for (const m of ["openCreate", "parentChoices", "openProgress", "openProgressList", "deleteTask", "toggleDone", "editTask", "say", "undo", "onKey"]) ProjectsView.prototype[m] = GanttView.prototype[m];
+
 /* ---------- plugin ---------- */
 module.exports = class TaskGanttPlugin extends Plugin {
   onload() {
@@ -1407,6 +1822,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
       reset() { this._t = null; this._p = null; },
     };
     this.addIcons(`<symbol id="iconTaskGantt" viewBox="0 0 32 32"><path d="M4 5h2v22H4zM8 7h12a1.5 1.5 0 0 1 0 3H8zM12 13h14a1.5 1.5 0 0 1 0 3H12zM10 19h8a1.5 1.5 0 0 1 0 3h-8zM16 25h10a1.5 1.5 0 0 1 0 3H16z" fill="currentColor"/></symbol>`);
+    this.addIcons(`<symbol id="iconTaskProjects" viewBox="0 0 32 32"><path d="M4 6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm12 0a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2zM4 18a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm14 0h10v3H18zm0 5h10v3H18z" fill="currentColor"/></symbol>`);
     const plugin = this;
     this.addTab({
       type: TAB,
@@ -1418,12 +1834,26 @@ module.exports = class TaskGanttPlugin extends Plugin {
         this.ganttView = null;
       },
     });
+    this.addTab({
+      type: TAB_P,
+      init() { this.projectsView = new ProjectsView(this.element, plugin); },
+      destroy() {
+        try { if (this.projectsView) this.projectsView.destroy(); } catch (e) { console.warn("[task-gantt] destroy failed", e); }
+        this.projectsView = null;
+      },
+    });
     this.addTopBar({ icon: "iconTaskGantt", title: "任务甘特图", position: "right", callback: () => this.open() });
+    this.addTopBar({ icon: "iconTaskProjects", title: "项目", position: "right", callback: () => this.openProjects() });
+    this.addCommand({ langKey: "openTaskProjects", langText: "打开项目管理", hotkey: "", callback: () => this.openProjects() });
     this.addCommand({ langKey: "openTaskGantt", langText: "打开任务甘特图", hotkey: "", callback: () => this.open() });
   }
 
   open() {
     openTab({ app: this.app, custom: { icon: "iconTaskGantt", title: "任务甘特图", data: {}, id: this.name + TAB } });
+  }
+
+  openProjects() {
+    openTab({ app: this.app, custom: { icon: "iconTaskProjects", title: "项目", data: {}, id: this.name + TAB_P } });
   }
 
   // every task read/write goes through this object (see onload): the plugin's own store
@@ -1649,23 +2079,55 @@ module.exports = class TaskGanttPlugin extends Plugin {
   }
 
   /* ----- projects (own store only) ----- */
-  async saveProject({ id, title, color }) {
+  async saveProject({ id, title, color, status, note, priority }) {
     title = String(title || "").trim();
     if (!title) throw new Error("项目名称不能为空");
+    if (id) return this.updateProject(id, { title, ...(color ? { color } : {}) });
     const proj = await this.own.loadProjectData(true);
     const now = new Date().toISOString();
-    if (id) {
-      const p = proj[id];
-      if (!p) throw new Error("项目已不存在");
-      p.title = title; if (color) p.color = color; p.updatedTime = now;
-    } else {
-      do { id = `quick_${Date.now()}${Math.random().toString(36).slice(2, 5)}`; } while (proj[id]); // two projects created in the same millisecond must not collide
-      const sort = Object.values(proj).reduce((m, x) => Math.max(m, x && typeof x === "object" ? Number(x.sort) || 0 : 0), 0) + 1;
-      proj[id] = { id, blockId: null, title, note: "", status: "active", priority: "none", categoryId: "", color: color || "#3b82f6", startDate: fromNum(todayNum()), endDate: null, archived: false, createdTime: now, updatedTime: now, sort };
-    }
+    do { id = `quick_${Date.now()}${Math.random().toString(36).slice(2, 5)}`; } while (proj[id]); // two projects created in the same millisecond must not collide
+    const sort = Object.values(proj).reduce((m, x) => Math.max(m, x && typeof x === "object" ? Number(x.sort) || 0 : 0), 0) + 1;
+    proj[id] = { id, blockId: null, title, note: note || "", status: PROJECT_STATUS.some(([k]) => k === status) ? status : "active", priority: PRIO_NAME[priority] ? priority : "none", categoryId: "", color: color || "#3b82f6", startDate: fromNum(todayNum()), endDate: null, archived: false, createdTime: now, updatedTime: now, sort };
     await this.own.saveProjectData(proj);
     window.dispatchEvent(new CustomEvent("reminderUpdated"));
     return id;
+  }
+
+  // Edit a project's own fields (not undoable). Empty strings clear optional fields.
+  async updateProject(id, f) {
+    const proj = await this.own.loadProjectData(true);
+    const p = proj[id];
+    if (!p || typeof p !== "object") throw new Error("项目已不存在");
+    const has = (k) => Object.prototype.hasOwnProperty.call(f, k);
+    if (has("title")) { const t = String(f.title || "").trim(); if (!t) throw new Error("项目名称不能为空"); p.title = t; }
+    if (has("color") && /^#[0-9a-fA-F]{6}$/.test(f.color || "")) p.color = f.color;
+    if (has("status")) { if (!PROJECT_STATUS.some(([k]) => k === f.status)) throw new Error("项目状态无效"); p.status = f.status; }
+    if (has("priority")) { if (!PRIO_NAME[f.priority]) throw new Error("优先级无效"); p.priority = f.priority; }
+    for (const k of ["startDate", "endDate"]) if (has(k)) { if (f[k] && !RE_DATE.test(f[k])) throw new Error("日期格式无效"); p[k] = f[k] || null; }
+    if (p.startDate && p.endDate && p.endDate < p.startDate) throw new Error("结束日期不能早于开始日期");
+    if (has("note")) p.note = String(f.note || "");
+    if (has("blockId")) { p.blockId = f.blockId || null; if (f.blockId && has("blockTitle")) p.blockTitle = f.blockTitle; else if (!f.blockId) delete p.blockTitle; }
+    if (has("archived")) p.archived = !!f.archived;
+    p.updatedTime = new Date().toISOString();
+    await this.own.saveProjectData(proj);
+    window.dispatchEvent(new CustomEvent("reminderUpdated"));
+    return p;
+  }
+
+  // Move tasks (and their subtasks) into a project; "" = unclassified. One undo step.
+  async assignProject(taskIds, projectId) {
+    const data = await this.own.loadReminderData(true), proj = await this.own.loadProjectData(true);
+    if (projectId && !(proj[projectId] && typeof proj[projectId] === "object")) throw new Error("项目已不存在");
+    const ids = new Set();
+    for (const id of taskIds) if (data[id]) { ids.add(id); this.descendantsOf(data, id).forEach((k) => ids.add(k.id)); }
+    if (!ids.size) return 0;
+    await this.backupOnce(data);
+    const before = this.snap(data, [...ids]);
+    for (const id of ids) { if (projectId) data[id].projectId = projectId; else delete data[id].projectId; }
+    await this.own.saveReminderData(data);
+    this.pushUndo(`归类 ${ids.size} 个任务`, before);
+    window.dispatchEvent(new CustomEvent("reminderUpdated"));
+    return ids.size;
   }
 
   // Deleting a project keeps its tasks: they become "未分类".
@@ -1767,7 +2229,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
         } catch (e) { docError = String(e && e.message || e); }
       }
     }
-    if (canPct) window.dispatchEvent(new CustomEvent("reminderUpdated"));
+    window.dispatchEvent(new CustomEvent("reminderUpdated")); // the project page shows these records too
     return { entry, docError };
   }
 
