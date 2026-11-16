@@ -227,8 +227,9 @@ class GanttView {
   // in-view toast; survives re-renders (re-attached in render())
   say(text, canUndo) {
     clearTimeout(this._tt);
-    this.toast.replaceChildren(h("span", null, text),
-      canUndo ? h("button", { class: "b3-button b3-button--small", onclick: () => { this.toast.style.display = "none"; this.undo(); } }, "撤销") : null);
+    const kids = [h("span", null, text)];
+    if (canUndo) kids.push(h("button", { class: "b3-button b3-button--small", onclick: () => { this.toast.style.display = "none"; this.undo(); } }, "撤销"));
+    this.toast.replaceChildren(...kids); // native replaceChildren(null) would render the text "null"
     this.toast.style.display = "flex";
     this._tt = setTimeout(() => { this.toast.style.display = "none"; }, 8000);
   }

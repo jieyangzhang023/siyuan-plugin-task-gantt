@@ -114,6 +114,9 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
   menus.length = 0; Q.undoStack = []; vq.taskMenu(mouse, { t: { id: "x", title: "x" }, children: [], parent: null }); ok(!menus[0].items.includes("删除任务…"), "host mode menu has no delete");
   await Q.setMode("own"); ok(Q.mode === "own" && Q.getHost() === Q.own, "setMode(own) switches the source");
   await Q.setMode("host"); ok(Q.mode === "host" && Q.getHost() === hostObj, "setMode(host) switches back");
+  // toast: no null child (it rendered as the text "null" after messages without an undo button)
+  const vt = await view(P); vt.say("无撤销提示", false); ok(vt.toast.children.length === 1 && vt.toast.children.every((c) => c != null), "say(text, false) has no null child");
+  vt.say("带撤销", true); ok(vt.toast.children.length === 2 && vt.toast.children.every((c) => c != null), "say(text, true) has the undo button");
   ok(nullAppend === 0, "no null append (" + nullAppend + ")");
   console.log("done");
 })().catch((e) => { console.error("ERR", e); process.exit(1); });
