@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.7.1
+- Verified against Task Note Management 7.2.2 (host methods, data file and block attributes unchanged); README updated. No code changes.
+
 ## 0.7.0
 - Right-click a task → 「不在摘要中显示（含子任务）」: it and all its subtasks stop counting in 今日 / 未排期 (overdue is never hidden). A 「已隐藏 N」 chip lists them with 「恢复显示」. Stored in `summary-hidden.json`; the chart itself is unchanged.
 
