@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-task-gantt",
   "author": "jieyangzhang023",
   "url": "https://github.com/jieyangzhang023/siyuan-plugin-task-gantt",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "minAppVersion": "3.0.0",
   "backends": [
     "all"
@@ -20,12 +20,17 @@
   },
   "readme": {
     "default": "README.md",
-    "zh_CN": "README.md"
+    "zh_CN": "README_zh_CN.md"
   },
   "keywords": [
     "gantt",
-    "甘特图",
     "task",
-    "项目管理"
-  ]
+    "project",
+    "timeline",
+    "甘特图",
+    "项目管理",
+    "任务"
+  ],
+  "icon": "icon.png",
+  "preview": "preview.png"
 }

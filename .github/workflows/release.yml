@@ -15,7 +15,7 @@ jobs:
           [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != plugin.json v$v"; exit 1; }
       - name: Package
         run: |
-          files="index.js index.css plugin.json README.md LICENSE"
+          files="index.js index.css plugin.json README.md README_zh_CN.md LICENSE"
           for f in icon.png preview.png; do [ -f "$f" ] && files="$files $f"; done
           zip package.zip $files
       - uses: softprops/action-gh-release@v2

@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.10.2
+- Bazaar preparation: icon and preview image, English README (default) with the Chinese one as README_zh_CN.md, screenshots, keywords. No code changes.
+
 ## 0.10.1
 - Fix: the 「⋯」 button on the project page did nothing (a popup menu opened from a click was closed immediately). Archive / unarchive and 「删除项目」 are now plain buttons next to the project settings.
 
