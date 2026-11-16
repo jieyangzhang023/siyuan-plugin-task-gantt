@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.7.2
+- Fix: after the bound document was deleted the task still looked bound and 「打开所在文档/块」 failed with 「块不存在」. Deleted bindings are now detected (hover card says 「文档已被删除」); the menu offers 「解除绑定」 (undoable) and 「重新创建文档并绑定…」; opening a task whose document is gone offers to unbind. Unknown or lagging index answers are re-checked against the block tree and never treated as deleted.
+
 ## 0.7.1
 - Verified against Task Note Management 7.2.2 (host methods, data file and block attributes unchanged); README updated. No code changes.
 

@@ -177,6 +177,7 @@ class GanttView {
     this.project = lsGet("tg-project", "");
     this.showUndated = lsGet("tg-undated", "0") === "1";
     this.sort = lsGet("tg-sort", "project") === "time" ? "time" : "project";
+    this.dead = new Set(); // task ids whose bound document was deleted
     this.sumOpen = ["today", "late", "undated", "hidden"].includes(lsGet("tg-sumopen", "")) ? lsGet("tg-sumopen", "") : ""; // which list under the summary strip is open
     this.fold = new Set();
     try { JSON.parse(lsGet("tg-fold", "[]")).forEach((x) => this.fold.add(x)); } catch (e) { /* ignore */ }
@@ -254,6 +255,18 @@ class GanttView {
       return;
     }
     this.render();
+    this.refreshDead();
+  }
+
+  // runs after the chart is drawn so a slow lookup never delays it; redraws only when the answer changed
+  async refreshDead() {
+    const my = (this._deadTok = (this._deadTok || 0) + 1);
+    let dead;
+    try { dead = await this.plugin.findDeadBindings(this.reminders); } catch (e) { return; }
+    if (my !== this._deadTok) return;
+    const same = dead.size === this.dead.size && [...dead].every((x) => this.dead.has(x));
+    this.dead = dead;
+    if (!same) this.render();
   }
 
   saveFold() { lsSet("tg-fold", JSON.stringify([...this.fold])); }
@@ -672,7 +685,7 @@ class GanttView {
       row("优先级", PRIO[t.priority]),
       row("进度", n.children.length ? `${n.doneLeaves}/${n.leaves} 个子任务 · ${Math.round(n.progress * 100)}%` : t.completed ? "100%" : n.progress ? Math.round(n.progress * 100) + "%" : null),
       row("番茄钟", t.pomodoroCount ? `${t.pomodoroCount} 个 · 专注 ${fmtMin(t.focusTime)}` : null),
-      row("文档", t.docTitle),
+      row("文档", this.dead.has(t.id) ? `${t.docTitle || "已绑定"}（文档已被删除）` : t.docTitle, this.dead.has(t.id) ? "tg-warn" : ""),
       this.logInfo(t.id),
       note ? h("div", { class: "tg-in" }, note.length > 160 ? note.slice(0, 160) + "…" : note) : null,
       n.kind === "own" ? h("div", { class: "tg-ih" }, "拖动平移 · 拖边缘调工期 · 双击或右键编辑") : null);
@@ -768,7 +781,10 @@ class GanttView {
     else if (inherited) menu.addItem({ icon: "iconEye", label: "已随上级任务在摘要中隐藏", disabled: true });
     else menu.addItem({ icon: "iconEyeoff", label: "不在摘要中显示（含子任务）", click: async () => { try { await this.plugin.setHidden(t.id, true); this.say(`「${t.title}」及其子任务不再计入今日 / 未排期（超期仍会显示）`, false); this.render(); } catch (e) { showMessage("操作失败：" + e, 4000, "error"); } } });
     if (nLog) menu.addItem({ icon: "iconList", label: `查看进度记录（${nLog}）`, click: () => this.openProgressList(n) });
-    if (t.blockId || t.docId) menu.addItem({ icon: "iconFile", label: "打开所在文档/块", click: () => this.openTask(t) });
+    if ((t.blockId || t.docId) && this.dead.has(t.id)) {
+      menu.addItem({ icon: "iconTrashcan", label: "绑定的文档已被删除，解除绑定", click: () => this.unbind(t) });
+      if (!t.completed && !(t.repeat && t.repeat.enabled) && !t.isRepeatInstance) menu.addItem({ icon: "iconAdd", label: "重新创建文档并绑定…", click: () => this.openCreateDoc(t) });
+    } else if (t.blockId || t.docId) menu.addItem({ icon: "iconFile", label: "打开所在文档/块", click: () => this.openTask(t) });
     else if (!t.completed && !(t.repeat && t.repeat.enabled) && !t.isRepeatInstance) menu.addItem({ icon: "iconAdd", label: "创建文档并绑定…", click: () => this.openCreateDoc(t) });
     // right-click on empty timeline space: create / schedule at that day
     const line = ev.target.closest && ev.target.closest(".tg-line");
@@ -1125,10 +1141,21 @@ class GanttView {
     return bar;
   }
 
-  openTask(t) {
+  async openTask(t) {
     const id = t.blockId || t.docId;
     if (!id) { showMessage("该任务没有绑定思源块/文档", 3000, "info"); return; }
+    if ((await this.plugin.blockExists(id)) === false) { this.dead.add(t.id); this.unbind(t); return; }
     try { openTab({ app: this.plugin.app, doc: { id } }); } catch (e) { showMessage("打开失败：" + e, 4000, "error"); }
+  }
+
+  unbind(t) {
+    sConfirm("解除绑定", `「${t.title}」绑定的文档已被删除。解除绑定后，任务本身不受影响，可重新创建文档并绑定。`, async () => {
+      try {
+        await this.plugin.unbindDoc(t.id);
+        this.dead.delete(t.id);
+        this.say(`已解除「${t.title}」的文档绑定`, true);
+      } catch (err) { showMessage("解除失败：" + err, 5000, "error"); }
+    });
   }
 
   showTip(ev, ns, ne) {
@@ -1342,6 +1369,53 @@ module.exports = class TaskGanttPlugin extends Plugin {
     return r.data || [];
   }
 
+  // true / false from the kernel's block tree; null when it cannot tell (never treat "unknown" as deleted)
+  async blockExists(id) {
+    try {
+      const r = await fetchSyncPost("/api/block/checkBlockExist", { id });
+      return r && r.code === 0 && typeof r.data === "boolean" ? r.data : null;
+    } catch (e) { return null; }
+  }
+
+  // task ids whose bound block/document no longer exists. The index lookup is cheap but can lag behind, so anything it misses is re-checked.
+  async findDeadBindings(reminders) {
+    const byBlock = new Map();
+    for (const t of Object.values(reminders || {})) {
+      if (!t || typeof t !== "object" || !t.id) continue;
+      const b = t.blockId || t.docId;
+      if (b) (byBlock.get(b) || byBlock.set(b, []).get(b)).push(t.id);
+    }
+    const ids = [...byBlock.keys()], found = new Set();
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        const rows = await this.sql(`select id from blocks where id in (${ids.slice(i, i + 100).map((x) => "'" + String(x).replace(/'/g, "") + "'").join(",")})`);
+        for (const r of rows) found.add(r.id);
+      }
+    } catch (e) { return new Set(); } // no index answer: report nothing rather than guess
+    const dead = new Set();
+    for (const id of ids) if (!found.has(id) && (await this.blockExists(id)) === false) byBlock.get(id).forEach((tid) => dead.add(tid));
+    return dead;
+  }
+
+  // drop a binding whose block is gone (blockId/docId/docTitle); refuses if the block still exists
+  async unbindDoc(taskId) {
+    const host = this.getHost();
+    if (!host) throw new Error("未找到任务笔记管理插件");
+    const data = await host.loadReminderData(true);
+    const t = data && data[taskId];
+    if (!t) throw new Error("任务已不存在");
+    const b = t.blockId || t.docId;
+    if (!b) throw new Error("任务没有绑定文档");
+    if ((await this.blockExists(b)) !== false) throw new Error("绑定的文档仍然存在，未解除");
+    await this.backupOnce(data);
+    const before = this.snap(data, [taskId]);
+    delete t.blockId; delete t.docId; delete t.docTitle;
+    await host.saveReminderData(data);
+    this.pushUndo(`解除绑定「${t.title}」`, before);
+    try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
+    window.dispatchEvent(new CustomEvent("reminderUpdated"));
+  }
+
   async listNotebooks() {
     const r = await fetchSyncPost("/api/notebook/lsNotebooks", "");
     if (!r || r.code !== 0) throw new Error((r && r.msg) || "读取笔记本失败");
@@ -1374,7 +1448,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     const before = await host.loadReminderData(true);
     const t0 = before && before[taskId];
     if (!t0) throw new Error("任务已不存在");
-    if (t0.blockId || t0.docId) throw new Error("任务已经绑定了文档");
+    if ((t0.blockId || t0.docId) && (await this.blockExists(t0.blockId || t0.docId)) !== false) throw new Error("任务已经绑定了文档");
     if (!title || !box) throw new Error("缺少标题或笔记本");
     await this.backupOnce(before);
     const base = !parentHPath || parentHPath === "/" ? "" : String(parentHPath).replace(/\/+$/, "");
