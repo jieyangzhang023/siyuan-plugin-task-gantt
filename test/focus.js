@@ -30,7 +30,7 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
 
 (async () => {
   // synthetic data only: this test does not depend on the author's tasks
-  const day = (off) => fromN(Math.round(Date.now() / 864e5) + off); // local/UTC skew is irrelevant at day granularity for these offsets
+  const day = (off) => { const d = new Date(); return fromN(Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5) + off); }; // local calendar day, same as the plugin's todayNum()
   const t = (id, o) => ({ id, title: id, completed: false, kanbanStatus: "short_term", ...o });
   data = {
     A: t("A", { date: day(-1), endDate: day(1), priority: "low" }),          // spans today

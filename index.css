@@ -147,3 +147,10 @@
 .tg-latew { color: #e5484d; font-weight: 600; }
 .tg-flash { animation: tg-flash 1.8s ease-out; }
 @keyframes tg-flash { 0%, 40% { background: color-mix(in srgb, #f5a524 35%, transparent); } 100% { background: transparent; } }
+
+/* project manager */
+.tg-plist2 { max-height: 55vh; overflow-y: auto; }
+.tg-prow { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--b3-border-color); }
+.tg-prow .b3-text-field { flex: 1; }
+.tg-pnew { border-bottom: none; margin-top: 8px; }
+.tg-colorin { width: 32px; height: 26px; padding: 0; border: 1px solid var(--b3-border-color); border-radius: 4px; background: none; cursor: pointer; }

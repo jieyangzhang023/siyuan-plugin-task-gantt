@@ -2,6 +2,11 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.8.0
+- **Standalone mode.** Tasks and projects can live in this plugin's own storage (`tasks.json`, `projects.json`, same record shape as Task Note Management), so the plugin no longer needs it. Without the host plugin installed it starts in standalone mode; with it installed and nothing chosen, behaviour is unchanged. 「切换为独立模式…」 (toolbar) / command 「从任务笔记管理导入任务并切换为独立模式」 copies the host's tasks and projects once (the host's files are only read, existing own data is backed up first); command 「切回任务笔记管理的数据」 switches back.
+- Built-in task editor (title, project, parent, dates, times, priority, status, note) used in standalone mode; 「删除任务…」 (with subtasks and their progress records, undoable); 「项目…」 manager (add, rename, recolor, delete; deleting keeps the tasks as unclassified).
+- Fix: two projects created in the same millisecond could share an id.
+
 ## 0.7.4
 - Sort by start time: a subtask that starts on the same day as its parent is now listed directly under the parent (grandchildren likewise); subtasks with a later start keep their own place. Parents still come before plain tasks that share the start date.
 

@@ -179,6 +179,7 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
     glineEl.listeners.pointermove[0]({ clientX: v.px * 5 + 1 }); await glineEl.listeners.pointerup[0]({ type: "pointerup", pointerId: 1, clientX: v.px * 5 + 1 });
     ok(global.__dlg && true, "group-row drag opens create dialog");
     // add row
+    await new Promise((r) => setTimeout(r, 30)); // let any reload still in flight land first, or it would consume the refocus flag mid-test
     v.render(); ok(count(v.el, "tg-addrow") === v.model.groups.filter((x) => !v.fold.has("g:" + x.id)).length, "one add row per open group: " + count(v.el, "tg-addrow"));
     v._adding = g.id; const ar = v.renderAddRow(g, 1000); const input = ar.children[0].children[1]; ok(/tg-addinput/.test(input.className), "add row shows input when active");
     input.value = "快速添加"; await input.listeners.keydown[0]({ key: "Enter", isComposing: false, preventDefault() {} });
