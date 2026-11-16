@@ -245,3 +245,6 @@
 .tp-arow { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--b3-border-color); font-size: 13px; }
 .tp-arow .tp-dim { margin-left: auto; }
 @media (max-width: 900px) { .tp-cols { grid-template-columns: 1fr; } .tp-tiles { grid-template-columns: repeat(3, 1fr); } .tp-big, .tp-wide { grid-column: span 3; } }
+
+.tp-del { color: #e5484d; }
+.tp-del:hover { background: color-mix(in srgb, #e5484d 12%, transparent); }

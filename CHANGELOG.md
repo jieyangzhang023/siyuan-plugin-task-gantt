@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.10.1
+- Fix: the 「⋯」 button on the project page did nothing (a popup menu opened from a click was closed immediately). Archive / unarchive and 「删除项目」 are now plain buttons next to the project settings.
+
 ## 0.10.0
 - **Project page** (second top-bar icon / command 「打开项目管理」 / chart toolbar 「项目…」): overview cards per project (status, priority, progress bar, today / overdue / undated / open counts, latest result, 12-week completion sparkline, 「甘特图」 shortcut), status filter and search, a 「未分类」 card for tasks without a project.
 - Project detail: edit name, color, status (进行中 / 暂停 / 已完成), priority, dates, note inline; bind / change / unbind a document; archive or delete; stat tiles; task tree with complete checkbox, quick add, edit, log progress, add subtask, delete; results timeline across the project's tasks; 「整理这些任务…」 moves unclassified tasks into a project in one undoable step.

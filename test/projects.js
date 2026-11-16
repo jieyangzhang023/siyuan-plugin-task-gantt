@@ -149,8 +149,16 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   v.open("__none"); ok(count(v.el, "tp-detail") === 1 && text(v.el).includes("整理这些任务"), "unclassified detail offers 整理");
   const asg = v.openAssign(); asg.ctl.dest.value = p1; asg.ctl.boxes.forEach((b) => { b.el.checked = b.t.id === t5.id; }); await asg.submit(); await new Promise((x) => setTimeout(x, 20));
   ok(P2.store["tasks.json"][t5.id].projectId === p1, "整理 moves the ticked task into the project");
-  // archive / delete via the project menu
-  v.open(p1); menus.length = 0; v.projectMenu({ clientX: 0, clientY: 0 }, P2.store["projects.json"][p1]); ok(menus[0].items.includes("归档项目") && menus[0].items.includes("删除项目…"), "project menu: " + menus[0].items.join(" | "));
+  // archive / delete are plain buttons on the detail page (a popup menu opened from a click did nothing in SiYuan)
+  v.open(p1); const btn = (label) => { let r = null; const w = (x) => { if (x && x.children) { if (x.tag === "button" && x.children.some((c) => c && c.t === label)) r = x; x.children.forEach(w); } }; w(v.el); return r; };
+  ok(!!btn("归档") && !!btn("删除项目"), "detail page shows 归档 and 删除项目 buttons");
+  await btn("归档").listeners.click[0](); await new Promise((x) => setTimeout(x, 30));
+  ok(P2.store["projects.json"][p1].archived === true, "归档 archives the project");
+  v.open(p1); ok(!!btn("取消归档"), "an archived project offers 取消归档");
+  await btn("取消归档").listeners.click[0](); await new Promise((x) => setTimeout(x, 30)); ok(P2.store["projects.json"][p1].archived === false, "取消归档 restores it");
+  const nTasks = Object.values(P2.store["tasks.json"]).filter((x) => x.projectId === p1).length;
+  v.open(p1); await btn("删除项目").listeners.click[0](); await new Promise((x) => setTimeout(x, 40));
+  ok(!P2.store["projects.json"][p1] && v.sel === "" && Object.values(P2.store["tasks.json"]).filter((x) => x.projectId === p1).length === 0 && Object.keys(P2.store["tasks.json"]).length >= nTasks, "删除项目 removes the project, keeps its tasks (unclassified) and returns to the overview");
   // new project dialog
   const np = v.openNewProject(); np.ctl.name.value = "页面新建"; np.ctl.note.value = "n"; await np.submit(); await new Promise((x) => setTimeout(x, 30));
   const made = Object.values(P2.store["projects.json"]).find((p) => p && p.title === "页面新建"); ok(made && made.note === "n" && v.sel === made.id, "新建项目 creates it and opens its page");

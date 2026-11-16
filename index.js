@@ -1614,9 +1614,10 @@ class ProjectsView {
     const st = this.statusOf(p);
     const field = (k, c) => h("label", { class: "tp-f" }, h("span", null, k), c);
     const docChip = this.docChip(p);
-    const more = h("button", { class: "b3-button b3-button--outline", title: "归档 / 删除", onclick: (e) => this.projectMenu(e, p) }, "⋯");
+    const arch = h("button", { class: "b3-button b3-button--outline", title: p.archived ? "取消归档，重新出现在项目列表里" : "归档后默认不在列表里显示，可在筛选「已归档」里找到", onclick: () => this.archiveProject(p) }, p.archived ? "取消归档" : "归档");
+    const del = h("button", { class: "b3-button b3-button--outline tp-del", title: "删除项目（任务不会被删除，会变成未分类）", onclick: () => this.removeProject(p) }, "删除项目");
     return h("div", { class: "tp-info" },
-      h("div", { class: "tp-row1" }, color, name, sel(PROJECT_STATUS, st === "archived" ? p.status || "active" : st, (v) => save({ status: v })), sel(Object.entries(PRIO_NAME).map(([k, t]) => [k, k === "none" ? "优先级：无" : "优先级：" + t]), p.priority || "none", (v) => save({ priority: v })), st === "archived" ? this.pill("已归档", "tp-s-archived") : null, more),
+      h("div", { class: "tp-row1" }, color, name, sel(PROJECT_STATUS, st === "archived" ? p.status || "active" : st, (v) => save({ status: v })), sel(Object.entries(PRIO_NAME).map(([k, t]) => [k, k === "none" ? "优先级：无" : "优先级：" + t]), p.priority || "none", (v) => save({ priority: v })), st === "archived" ? this.pill("已归档", "tp-s-archived") : null, h("span", { class: "fn__flex-1" }), arch, del),
       h("div", { class: "tp-row2" }, field("开始", date("startDate")), field("结束", date("endDate")), field("文档", docChip)),
       note);
   }
@@ -1631,16 +1632,16 @@ class ProjectsView {
     return h("span", { class: "tp-docs" }, open, h("button", { class: "b3-button b3-button--outline", title: "换一个文档", onclick: () => this.openBindDoc(p) }, "更换"), h("button", { class: "b3-button b3-button--outline", title: "解除绑定", onclick: () => save({ blockId: "" }) }, "×"));
   }
 
-  projectMenu(ev, p) {
-    const menu = new Menu("task-gantt-proj");
+  async archiveProject(p) {
     const archived = !!p.archived;
-    menu.addItem({ icon: "iconArchive", label: archived ? "取消归档" : "归档项目", click: async () => { try { await this.plugin.updateProject(p.id, { archived: !archived }); this.say(archived ? "已取消归档" : "已归档，可在筛选「已归档」里找到", false); await this.reload(); } catch (e) { showMessage("操作失败：" + e, 4000, "error"); } } });
-    menu.addSeparator();
+    try { await this.plugin.updateProject(p.id, { archived: !archived }); this.say(archived ? "已取消归档" : "已归档，可在筛选「已归档」里找到", false); await this.reload(); } catch (e) { showMessage("操作失败：" + e, 4000, "error"); }
+  }
+
+  removeProject(p) {
     const n = this.tasksOf(p.id).length;
-    menu.addItem({ icon: "iconTrashcan", label: "删除项目…", click: () => sConfirm("删除项目", `删除项目「${p.title}」？它的 ${n} 个任务不会被删除，会变成「未分类」。`, async () => {
-      try { await this.plugin.deleteProject(p.id); this.sel = ""; lsSet("tp-sel", ""); await this.reload(); this.say("已删除项目", false); } catch (e) { showMessage("删除失败：" + e, 5000, "error"); }
-    }) });
-    menu.open({ x: ev.clientX, y: ev.clientY });
+    sConfirm("删除项目", `删除项目「${p.title}」？它的 ${n} 个任务不会被删除，会变成「未分类」。此操作不能撤销。`, async () => {
+      try { await this.plugin.deleteProject(p.id); this.sel = ""; lsSet("tp-sel", ""); await this.reload(); this.say(`已删除项目「${p.title}」`, false); } catch (e) { showMessage("删除失败：" + e, 5000, "error"); }
+    });
   }
 
   /* ----- tasks of the project ----- */
