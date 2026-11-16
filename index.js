@@ -314,8 +314,10 @@ class GanttView {
       const all = [];
       const collect = (n) => { all.push(n); n.children.forEach(collect); };
       model.groups.forEach((g) => g.roots.forEach(collect));
+      const parents = new Set(); // same start date: tasks that have subtasks come first, whether or not the subtasks are currently shown
+      for (const t of Object.values(this.reminders || {})) if (t && t.parentId) parents.add(t.parentId);
       const dated = all.filter((n) => n.start != null && (!filtering || pass(n)))
-        .sort((a, b) => a.start - b.start || a.end - b.end || (a.t.sort || 0) - (b.t.sort || 0) || String(a.t.title).localeCompare(String(b.t.title)));
+        .sort((a, b) => a.start - b.start || (parents.has(b.id) ? 1 : 0) - (parents.has(a.id) ? 1 : 0) || a.end - b.end || (a.t.sort || 0) - (b.t.sort || 0) || String(a.t.title).localeCompare(String(b.t.title)));
       const undated = all.filter((n) => n.start == null && n.spanStart == null && (!filtering || pass(n)));
       for (const n of dated) { rows.push({ type: "task", n }); shown++; }
       if (this.showUndated) for (const n of undated) { rows.push({ type: "task", n }); shown++; }
