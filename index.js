@@ -176,7 +176,7 @@ class GanttView {
     this.project = lsGet("tg-project", "");
     this.showUndated = lsGet("tg-undated", "0") === "1";
     this.sort = lsGet("tg-sort", "project") === "time" ? "time" : "project";
-    this.sumOpen = ["today", "late"].includes(lsGet("tg-sumopen", "")) ? lsGet("tg-sumopen", "") : ""; // which list under the summary strip is open
+    this.sumOpen = ["today", "late", "undated"].includes(lsGet("tg-sumopen", "")) ? lsGet("tg-sumopen", "") : ""; // which list under the summary strip is open
     this.fold = new Set();
     try { JSON.parse(lsGet("tg-fold", "[]")).forEach((x) => this.fold.add(x)); } catch (e) { /* ignore */ }
     this.labelW = Math.min(LABEL_MAX, Math.max(LABEL_MIN, Number(lsGet("tg-labelw", LABEL_DEF)) || LABEL_DEF));
@@ -409,11 +409,12 @@ class GanttView {
   }
 
   // Leaf tasks that matter right now. Overdue uses stateOf (an end date in the past); open-ended tasks are never overdue.
-  // Today = the task's date range covers today, or it is open-ended and in progress, or it is in progress with no date at all.
+  // Today = the task's date range covers today, or it is open-ended and in progress, or it is due today.
+  // Undated = no date of any kind (listed separately, never under today).
   focusLists() {
     const today = this.model.today, hasKid = new Set();
     for (const t of Object.values(this.reminders || {})) if (t && t.parentId) hasKid.add(t.parentId);
-    const due = [], late = [];
+    const due = [], late = [], undated = [];
     const walk = (n) => {
       n.children.forEach(walk);
       const t = n.t;
@@ -423,40 +424,44 @@ class GanttView {
       let isToday = false;
       if (n.kind === "own") isToday = n.noEnd ? n.start === today || (doing && n.start <= today) : n.start <= today && n.end >= today;
       else if (n.kind === "deadline") isToday = n.end === today;
-      else if (!n.kind) isToday = doing;
+      else if (!n.kind) { undated.push(n); return; }
       if (isToday) due.push(n);
     };
     this.model.groups.forEach((g) => g.roots.forEach(walk));
     const pr = { high: 0, medium: 1, low: 2 };
     late.sort((a, b) => a.end - b.end || String(a.t.title).localeCompare(String(b.t.title)));
     due.sort((a, b) => (pr[a.t.priority] ?? 3) - (pr[b.t.priority] ?? 3) || (a.start ?? 1e9) - (b.start ?? 1e9) || String(a.t.title).localeCompare(String(b.t.title)));
-    return { due, late };
+    const st = { doing: 0, short_term: 1, long_term: 2 };
+    undated.sort((a, b) => (st[a.t.kanbanStatus] ?? 3) - (st[b.t.kanbanStatus] ?? 3) || (pr[a.t.priority] ?? 3) - (pr[b.t.priority] ?? 3) || String(a.t.title).localeCompare(String(b.t.title)));
+    return { due, late, undated };
   }
 
   renderSummary() {
-    const { due, late } = this.focusLists();
+    const { due, late, undated } = this.focusLists();
     const today = this.model.today, md = (d) => fromNum(d).slice(5);
     const open = this.sumOpen;
     const chip = (key, label, count, cls) => h("button", { class: `tg-chip ${cls}` + (open === key ? " tg-on" : ""), title: open === key ? "收起" : "展开清单",
       onclick: () => { this.sumOpen = open === key ? "" : key; lsSet("tg-sumopen", this.sumOpen); this.render(); } }, label, h("b", null, String(count)));
     const strip = h("div", { class: "tg-focus" }, chip("today", "今日", due.length, "tg-c-today"), chip("late", "超期", late.length, late.length ? "tg-c-late" : "tg-c-ok"),
+      chip("undated", "未排期", undated.length, "tg-c-undated"),
       late.length ? null : h("span", { class: "tg-ok" }, "无超期任务"));
     const wrap = h("div", { class: "tg-focuswrap" }, strip);
     if (!open) return wrap;
-    const list = open === "late" ? late : due, isLate = open === "late";
+    const list = open === "late" ? late : open === "undated" ? undated : due, isLate = open === "late", isUndated = open === "undated";
     const item = (n) => {
       const t = n.t, proj = this.projects[t.projectId];
-      const when = isLate ? `超期 ${today - n.end} 天 · 截止 ${md(n.end)}`
+      const when = isUndated ? (KANBAN[t.kanbanStatus] || "未排期") : isLate ? `超期 ${today - n.end} 天 · 截止 ${md(n.end)}`
         : n.kind === "own" ? (n.noEnd ? "持续中" : n.end > n.start ? `${md(n.start)} ~ ${md(n.end)}` : md(n.start)) : n.kind === "deadline" ? "今日截止" : "进行中（未排期）";
       const bProg = h("button", { class: "b3-button b3-button--outline", onclick: () => this.openProgress(n) }, "记录进度");
+      const bToday = isUndated ? h("button", { class: "b3-button b3-button--outline", title: "把开始日期设为今天（1 天）", onclick: () => this.schedule(n, today, today) }, "排到今天") : null;
       const bDone = h("button", { class: "b3-button b3-button--outline", onclick: () => this.toggleDone(t) }, "完成");
       return h("div", { class: "tg-fitem" },
         h("span", { class: "tg-ftitle", title: "在甘特图中定位", onclick: () => this.locate(n) }, t.title || "(无标题)"),
         h("span", { class: "tg-meta" }, proj ? proj.title : "未分类"),
         h("span", { class: "tg-fwhen" + (isLate ? " tg-latew" : "") }, when),
-        h("span", { class: "fn__flex-1" }), bProg, bDone);
+        h("span", { class: "fn__flex-1" }), bToday, bProg, bDone);
     };
-    wrap.append(h("div", { class: "tg-fpanel" }, list.length ? list.map(item) : h("div", { class: "tg-empty" }, isLate ? "没有超期任务。" : "今天没有安排的任务。")));
+    wrap.append(h("div", { class: "tg-fpanel" }, list.length ? list.map(item) : h("div", { class: "tg-empty" }, isLate ? "没有超期任务。" : isUndated ? "没有未排期的任务。" : "今天没有安排的任务。")));
     return wrap;
   }
 

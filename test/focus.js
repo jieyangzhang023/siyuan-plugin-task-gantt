@@ -50,7 +50,8 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
   const root = El("div"); const v = new GanttView(root, plugin); v.done = "all"; v.showUndated = true; await v.reload();
   const { due, late } = v.focusLists();
   const ids = (l) => l.map((n) => n.id).sort().join(",");
-  ok(ids(due) === "A,A2,C,D,I,J", "today list: " + ids(due));
+  ok(ids(due) === "A,A2,C,I,J", "today list (undated D excluded): " + ids(due));
+  ok(ids(v.focusLists().undated) === "D", "undated list: " + ids(v.focusLists().undated));
   ok(ids(late) === "B,F1", "overdue list: " + ids(late) + " (parent F and open-ended E excluded)");
   ok(late[0].id === "F1" || late[0].end <= late[1].end, "overdue sorted most overdue first");
   ok(due[0].id === "A2", "today sorted by priority (high first): " + due[0].id);
@@ -58,16 +59,22 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
 
   // strip + panel
   v.sumOpen = ""; v.render();
-  ok(count(v.el, "tg-chip") === 2 && count(v.el, "tg-fitem") === 0, "strip shows two chips, no list when closed");
+  ok(count(v.el, "tg-chip") === 3 && count(v.el, "tg-fitem") === 0, "strip shows three chips, no list when closed");
   v.sumOpen = "late"; v.render(); ok(count(v.el, "tg-fitem") === late.length, "late list rows: " + count(v.el, "tg-fitem"));
   v.sumOpen = "today"; v.render(); ok(count(v.el, "tg-fitem") === due.length, "today list rows: " + count(v.el, "tg-fitem"));
+  v.sumOpen = "undated"; v.render(); ok(count(v.el, "tg-fitem") === 1, "undated list rows: " + count(v.el, "tg-fitem"));
   // project filter narrows the numbers
-  v.project = "no-such-project"; v.render(); ok(v.focusLists().due.length === 0 && v.focusLists().late.length === 0, "project filter applies to the summary");
+  v.project = "no-such-project"; v.render(); ok(v.focusLists().due.length === 0 && v.focusLists().late.length === 0 && v.focusLists().undated.length === 0, "project filter applies to the summary");
   v.project = "";
   // no overdue -> ok state
   for (const k of ["B", "F", "F1"]) delete data[k]; await v.reload();
   ok(v.focusLists().late.length === 0 && count(v.el, "tg-c-ok") === 1, "no overdue shows the ok chip");
   v.sumOpen = "late"; v.render(); ok(count(v.el, "tg-empty") >= 1, "empty overdue panel message");
+
+  // schedule from the undated list -> becomes a 1-day task today
+  const nd = v.focusLists().undated[0]; await v.schedule(nd, v.model.today, v.model.today);
+  ok(data.D.date === day(0) && !data.D.endDate, "排到今天 sets date to today: " + data.D.date);
+  await v.reload(); ok(v.focusLists().undated.length === 0 && v.focusLists().due.some((n) => n.id === "D"), "scheduled task moves from undated to today");
 
   // locate unfolds ancestors / project and clears filters
   data.P = t("P", { date: day(-1), endDate: day(1) }); data.P1 = t("P1", { parentId: "P", date: day(0), endDate: day(0) });

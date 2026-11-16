@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.6.1
+- Tasks with no date are no longer listed under 今日; they get their own 「未排期 N」 chip (in progress first, then short/long term). Each row has 「排到今天」 (sets the start date to today) besides 「记录进度」 and 「完成」.
+
 ## 0.6.0
 - Summary strip under the toolbar: 「今日 N」and「超期 N」chips. Click one to open its list; click a title to jump to the task on the chart (unfolds parents, clears filters, flashes the row); each row has 「记录进度」and「完成」buttons. Follows the project filter; state is remembered. Today = date range covers today, open-ended in-progress, or in-progress with no date. Overdue = end date in the past (open-ended tasks never count).
 
