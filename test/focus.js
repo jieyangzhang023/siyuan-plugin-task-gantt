@@ -83,6 +83,27 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
   v.scroller = v.scroller || El("div");
   v.locate(node);
   ok(!v.fold.has("P") && v.q === "" && v.status === "all", "locate unfolds parent and clears filters");
+
+  // hide a container task: subtree leaves leave 今日 / 未排期, overdue stays
+  data.PL = t("PL", { parentId: "P", date: day(-6), endDate: day(-2) }); data.PU = t("PU", { parentId: "P" });
+  await v.reload();
+  ok(v.focusLists().due.some((n) => n.id === "P1") && v.focusLists().undated.some((n) => n.id === "PU"), "before hiding: P's children are listed");
+  menus.length = 0; const pn = v.nodeOf("P"); v.taskMenu({ preventDefault() {}, target: {}, clientX: 0, clientY: 0 }, pn);
+  ok(menus[0].items.includes("不在摘要中显示（含子任务）"), "menu offers hide: " + menus[0].items.join(" | "));
+  await plugin.setHidden("P", true); await v.reload();
+  const fl = v.focusLists();
+  ok(!fl.due.some((n) => n.id === "P1") && !fl.undated.some((n) => n.id === "PU"), "hidden: subtree leaves removed from today/undated");
+  ok(fl.late.some((n) => n.id === "PL"), "hidden: overdue child is still listed");
+  ok(fl.marked.length === 1 && fl.marked[0].id === "P", "marked list has the task");
+  ok(plugin.store["summary-hidden.json"].ids.join() === "P", "persisted via saveData");
+  v.sumOpen = ""; v.render(); ok(count(v.el, "tg-chip") === 4, "hidden chip appears");
+  v.sumOpen = "hidden"; v.render(); ok(count(v.el, "tg-fitem") === 1, "hidden list shows the marked task");
+  menus.length = 0; v.taskMenu({ preventDefault() {}, target: {}, clientX: 0, clientY: 0 }, pn);
+  ok(menus[0].items.includes("恢复在摘要中显示"), "menu offers restore");
+  menus.length = 0; v.taskMenu({ preventDefault() {}, target: {}, clientX: 0, clientY: 0 }, v.nodeOf("PU"));
+  ok(menus[0].items.includes("已随上级任务在摘要中隐藏"), "child shows inherited state");
+  await plugin.setHidden("P", false); await v.reload();
+  ok(v.focusLists().due.some((n) => n.id === "P1") && v.focusLists().marked.length === 0, "restored");
   ok(nullAppend === 0, "no null append (" + nullAppend + ")");
   console.log("done");
 })().catch((e) => { console.error("ERR", e); process.exit(1); });
