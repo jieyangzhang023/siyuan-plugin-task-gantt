@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.6.0
+- Summary strip under the toolbar: 「今日 N」and「超期 N」chips. Click one to open its list; click a title to jump to the task on the chart (unfolds parents, clears filters, flashes the row); each row has 「记录进度」and「完成」buttons. Follows the project filter; state is remembered. Today = date range covers today, open-ended in-progress, or in-progress with no date. Overdue = end date in the past (open-ended tasks never count).
+
 ## 0.5.1
 - Removed the 「导入任务计划」command (it read a local `import-plan.json` and was specific to the author's workflow).
 

@@ -126,3 +126,23 @@
 .tg-logitem { padding: 8px 0; border-bottom: 1px solid var(--b3-border-color); }
 .tg-loghead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .tg-logtext { white-space: pre-wrap; word-break: break-all; }
+
+/* today / overdue summary */
+.tg-focuswrap { border-bottom: 1px solid var(--b3-border-color); background: var(--b3-theme-surface); }
+.tg-focus { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
+.tg-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border: 1px solid var(--b3-border-color); border-radius: 14px; background: var(--b3-theme-background); color: var(--b3-theme-on-surface); cursor: pointer; font-size: 12px; }
+.tg-chip b { font-size: 14px; }
+.tg-chip.tg-on { border-color: currentColor; box-shadow: 0 0 0 1px currentColor inset; }
+.tg-c-today { color: #3b82f6; }
+.tg-c-late { color: #e5484d; background: color-mix(in srgb, #e5484d 10%, var(--b3-theme-background)); }
+.tg-c-ok { color: #22a05a; }
+.tg-ok { font-size: 12px; color: #22a05a; }
+.tg-fpanel { max-height: 220px; overflow-y: auto; padding: 0 12px 8px; }
+.tg-fitem { display: flex; align-items: center; gap: 10px; padding: 4px 0; border-top: 1px dashed var(--b3-border-color); font-size: 13px; }
+.tg-fitem .b3-button { padding: 0 8px; height: 24px; font-size: 12px; }
+.tg-ftitle { cursor: pointer; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
+.tg-ftitle:hover { color: var(--b3-theme-primary); text-decoration: underline; }
+.tg-fwhen { flex: none; font-size: 12px; color: var(--b3-theme-on-surface-light); }
+.tg-latew { color: #e5484d; font-weight: 600; }
+.tg-flash { animation: tg-flash 1.8s ease-out; }
+@keyframes tg-flash { 0%, 40% { background: color-mix(in srgb, #f5a524 35%, transparent); } 100% { background: transparent; } }

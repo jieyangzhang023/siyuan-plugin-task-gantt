@@ -176,6 +176,7 @@ class GanttView {
     this.project = lsGet("tg-project", "");
     this.showUndated = lsGet("tg-undated", "0") === "1";
     this.sort = lsGet("tg-sort", "project") === "time" ? "time" : "project";
+    this.sumOpen = ["today", "late"].includes(lsGet("tg-sumopen", "")) ? lsGet("tg-sumopen", "") : ""; // which list under the summary strip is open
     this.fold = new Set();
     try { JSON.parse(lsGet("tg-fold", "[]")).forEach((x) => this.fold.add(x)); } catch (e) { /* ignore */ }
     this.labelW = Math.min(LABEL_MAX, Math.max(LABEL_MIN, Number(lsGet("tg-labelw", LABEL_DEF)) || LABEL_DEF));
@@ -332,6 +333,7 @@ class GanttView {
     const root = h("div", { class: "tg-root", style: `--day:${px}px;--rowh:${ROW_H}px;--labelw:${this.labelW}px` });
     this.rootEl = root;
     root.append(this.renderBar(shown, hidden));
+    root.append(this.renderSummary());
 
     const scroller = h("div", { class: "tg-scroll" });
     const inner = h("div", { class: "tg-inner", style: `width:${this.labelW + lineW}px` });
@@ -404,6 +406,76 @@ class GanttView {
       h("span", { class: "tg-lg" }, h("i", { class: k === "late" ? "tg-lgl" : "", style: `background-color:${STATE_COLOR[k]}` }), t)));
     const addBtn = h("button", { class: "b3-button b3-button--text", onclick: () => this.openCreate({}) }, "＋ 新建任务");
     return h("div", { class: "tg-bar" }, addBtn, search, sortSel, projSel, statusSel, doneSel, zoomBtns, und, today, foldBtn, undoBtn, refresh, legend, info);
+  }
+
+  // Leaf tasks that matter right now. Overdue uses stateOf (an end date in the past); open-ended tasks are never overdue.
+  // Today = the task's date range covers today, or it is open-ended and in progress, or it is in progress with no date at all.
+  focusLists() {
+    const today = this.model.today, hasKid = new Set();
+    for (const t of Object.values(this.reminders || {})) if (t && t.parentId) hasKid.add(t.parentId);
+    const due = [], late = [];
+    const walk = (n) => {
+      n.children.forEach(walk);
+      const t = n.t;
+      if (hasKid.has(n.id) || t.completed || t.kanbanStatus === "abandoned") return;
+      if (this.stateOf(n) === "late") { late.push(n); return; }
+      const doing = t.kanbanStatus === "doing";
+      let isToday = false;
+      if (n.kind === "own") isToday = n.noEnd ? n.start === today || (doing && n.start <= today) : n.start <= today && n.end >= today;
+      else if (n.kind === "deadline") isToday = n.end === today;
+      else if (!n.kind) isToday = doing;
+      if (isToday) due.push(n);
+    };
+    this.model.groups.forEach((g) => g.roots.forEach(walk));
+    const pr = { high: 0, medium: 1, low: 2 };
+    late.sort((a, b) => a.end - b.end || String(a.t.title).localeCompare(String(b.t.title)));
+    due.sort((a, b) => (pr[a.t.priority] ?? 3) - (pr[b.t.priority] ?? 3) || (a.start ?? 1e9) - (b.start ?? 1e9) || String(a.t.title).localeCompare(String(b.t.title)));
+    return { due, late };
+  }
+
+  renderSummary() {
+    const { due, late } = this.focusLists();
+    const today = this.model.today, md = (d) => fromNum(d).slice(5);
+    const open = this.sumOpen;
+    const chip = (key, label, count, cls) => h("button", { class: `tg-chip ${cls}` + (open === key ? " tg-on" : ""), title: open === key ? "收起" : "展开清单",
+      onclick: () => { this.sumOpen = open === key ? "" : key; lsSet("tg-sumopen", this.sumOpen); this.render(); } }, label, h("b", null, String(count)));
+    const strip = h("div", { class: "tg-focus" }, chip("today", "今日", due.length, "tg-c-today"), chip("late", "超期", late.length, late.length ? "tg-c-late" : "tg-c-ok"),
+      late.length ? null : h("span", { class: "tg-ok" }, "无超期任务"));
+    const wrap = h("div", { class: "tg-focuswrap" }, strip);
+    if (!open) return wrap;
+    const list = open === "late" ? late : due, isLate = open === "late";
+    const item = (n) => {
+      const t = n.t, proj = this.projects[t.projectId];
+      const when = isLate ? `超期 ${today - n.end} 天 · 截止 ${md(n.end)}`
+        : n.kind === "own" ? (n.noEnd ? "持续中" : n.end > n.start ? `${md(n.start)} ~ ${md(n.end)}` : md(n.start)) : n.kind === "deadline" ? "今日截止" : "进行中（未排期）";
+      const bProg = h("button", { class: "b3-button b3-button--outline", onclick: () => this.openProgress(n) }, "记录进度");
+      const bDone = h("button", { class: "b3-button b3-button--outline", onclick: () => this.toggleDone(t) }, "完成");
+      return h("div", { class: "tg-fitem" },
+        h("span", { class: "tg-ftitle", title: "在甘特图中定位", onclick: () => this.locate(n) }, t.title || "(无标题)"),
+        h("span", { class: "tg-meta" }, proj ? proj.title : "未分类"),
+        h("span", { class: "tg-fwhen" + (isLate ? " tg-latew" : "") }, when),
+        h("span", { class: "fn__flex-1" }), bProg, bDone);
+    };
+    wrap.append(h("div", { class: "tg-fpanel" }, list.length ? list.map(item) : h("div", { class: "tg-empty" }, isLate ? "没有超期任务。" : "今天没有安排的任务。")));
+    return wrap;
+  }
+
+  // scroll the chart to a task: unfold its ancestors and project, clear filters that would hide it, then flash the row
+  locate(n) {
+    let changed = false;
+    for (let p = n.parent; p; p = p.parent) if (this.fold.delete(p.id)) changed = true;
+    const find = (x, g) => x.id === n.id || x.children.some((c) => find(c, g));
+    for (const g of this.model.groups) if (g.roots.some((r) => find(r, g)) && this.fold.delete("g:" + g.id)) changed = true;
+    if (this.q || this.status !== "all") { this.q = ""; this.status = "all"; changed = true; }
+    if (n.spanStart == null && !this.showUndated) { this.showUndated = true; lsSet("tg-undated", "1"); changed = true; }
+    if (changed) { this.saveFold(); this.render(); }
+    const row = this.el.querySelector && this.el.querySelector(`[data-id="${n.id}"]`);
+    if (!row || !this.scroller) { showMessage("该任务当前不在图中（可能被「完成范围」或项目筛选排除）", 3000, "info"); return; }
+    const sc = this.scroller, r = row.getBoundingClientRect(), s = sc.getBoundingClientRect();
+    sc.scrollTop = Math.max(0, sc.scrollTop + (r.top - s.top) - 80);
+    if (n.start != null) { const day = Math.min(Math.max(this.model.today, n.start), n.vEnd != null ? n.vEnd : n.start); sc.scrollLeft = Math.max(0, (day - this.rs) * this.px - 160); }
+    row.classList.add("tg-flash");
+    setTimeout(() => { try { row.classList.remove("tg-flash"); } catch (e) { /* ignore */ } }, 1800);
   }
 
   // every key that can be folded: "g:<project>" and each task with children
@@ -639,7 +711,7 @@ class GanttView {
       const bx = this.box(d, d);
       if (bx) line.append(h("i", { class: "tg-mk", style: `left:${bx.left + bx.width / 2}px`, title: `${fromNum(d)} 有 ${c} 条成果记录` }));
     }
-    const rowEl = h("div", { class: "tg-row" }, label, line);
+    const rowEl = h("div", { class: "tg-row", "data-id": n.id }, label, line);
     rowEl.addEventListener("contextmenu", (ev) => { ev.preventDefault(); this.taskMenu(ev, n); });
     return rowEl;
   }
