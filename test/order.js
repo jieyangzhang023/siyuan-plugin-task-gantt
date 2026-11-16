@@ -40,10 +40,19 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
     D1: t("D1", { parentId: "D", date: "2026-11-10", endDate: "2026-11-10", completed: true, completedTime: "2026-11-10 10:00" }),
     E: t("E", { date: "2026-11-09", endDate: "2026-11-09" }),                   // earlier start still wins
     F: t("F", { date: "2026-11-11", endDate: "2026-11-11" }),
+    // same-start subtasks: G is a parent, G1 (itself a parent, so first) and G2 start with it, G1 has its own same-start child G1a; G3 starts later
+    G: t("G", { date: "2026-11-08", endDate: "2026-11-15" }),
+    X0: t("X0", { date: "2026-11-08", endDate: "2026-11-08" }),               // unrelated plain task, same start as G
+    G1: t("G1", { parentId: "G", date: "2026-11-08", endDate: "2026-11-12" }),
+    G1a: t("G1a", { parentId: "G1", date: "2026-11-08", endDate: "2026-11-09" }),
+    G2: t("G2", { parentId: "G", date: "2026-11-08", endDate: "2026-11-10" }),
+    G3: t("G3", { parentId: "G", date: "2026-11-12", endDate: "2026-11-13" }),
   };
   const root = El("div"); const v = new GanttView(root, plugin); v.sort = "time"; v.done = "open"; v.showUndated = true; await v.reload();
   const order = []; const labels = []; const walk = (x) => { if (x && x.children) { if (x.className && x.className.split(" ").includes("tg-row")) { const sp = x.attrs && x.attrs["data-id"]; if (sp) order.push(sp); } x.children.forEach(walk); } }; walk(v.el);
-  ok(order.join(",") === "E,B,D,C,A,F,B1", "time order: " + order.join(","));
+  ok(order.join(",") === "G,G1,G1a,G2,X0,E,B,D,C,A,F,B1,G3", "time order: " + order.join(","));
+  ok(order.indexOf("G") + 1 === order.indexOf("G1") && order.indexOf("G1") + 1 === order.indexOf("G1a") && order.indexOf("G1a") + 1 === order.indexOf("G2") && order.indexOf("G2") + 1 === order.indexOf("X0"), "same-start subtasks sit directly under their parent, grandchild under its own parent, before unrelated tasks");
+  ok(order.indexOf("G3") > order.indexOf("F"), "a subtask with a later start is NOT pulled under its parent");
   const i = (id) => order.indexOf(id);
   ok(i("E") < i("B") && i("B") < i("C") && i("D") < i("C") && i("B") < i("A") && i("D") < i("A"), "same start: parents (B, D) before plain tasks (A, C)");
   ok(i("C") < i("A"), "among plain tasks the earlier end still comes first");

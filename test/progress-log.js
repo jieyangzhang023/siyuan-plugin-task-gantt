@@ -32,7 +32,7 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
   const appended = [];
   global.__kernel = async (u, b) => { if (u === "/api/block/appendBlock") { appended.push(b); return { code: 0, data: [] }; } return { code: 0, data: [] }; };
   const leaf = Object.values(data).find((t) => t.date && !t.completed && !t.repeat && !t.isRepeatInstance && !Object.values(data).some((c) => c.parentId === t.id) && !t.docId && !t.blockId);
-  const bound = Object.values(data).find((t) => t.docId && !t.completed && !t.repeat && !t.isRepeatInstance && !Object.values(data).some((c) => c.parentId === t.id));
+  const bound = Object.values(data).find((t) => t.docId && !t.completed && !t.repeat && !t.isRepeatInstance && !Object.values(data).some((c) => c.parentId === t.id)) || (data.__bound = { id: "__bound", title: "bound", completed: false, kanbanStatus: "doing", date: "2026-11-10", docId: "d1", blockId: "d1", docTitle: "文档" }); // synthetic fallback so this check never depends on the data
   const parent = Object.values(data).find((t) => !t.completed && Object.values(data).some((c) => c.parentId === t.id));
   const snapData = JSON.stringify(data);
   await plugin.loadLog();

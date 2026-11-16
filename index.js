@@ -316,8 +316,14 @@ class GanttView {
       model.groups.forEach((g) => g.roots.forEach(collect));
       const parents = new Set(); // same start date: tasks that have subtasks come first, whether or not the subtasks are currently shown
       for (const t of Object.values(this.reminders || {})) if (t && t.parentId) parents.add(t.parentId);
-      const dated = all.filter((n) => n.start != null && (!filtering || pass(n)))
+      const sorted = all.filter((n) => n.start != null && (!filtering || pass(n)))
         .sort((a, b) => a.start - b.start || (parents.has(b.id) ? 1 : 0) - (parents.has(a.id) ? 1 : 0) || a.end - b.end || (a.t.sort || 0) - (b.t.sort || 0) || String(a.t.title).localeCompare(String(b.t.title)));
+      // a subtask that starts on the same day as its parent sits directly under the parent (listed in the same order, grandchildren likewise)
+      const inList = new Set(sorted), kidsOf = new Map(), dated = [];
+      const attached = (n) => n.parent && inList.has(n.parent) && n.parent.start === n.start;
+      for (const n of sorted) if (attached(n)) (kidsOf.get(n.parent) || kidsOf.set(n.parent, []).get(n.parent)).push(n);
+      const emit = (n) => { dated.push(n); (kidsOf.get(n) || []).forEach(emit); };
+      for (const n of sorted) if (!attached(n)) emit(n);
       const undated = all.filter((n) => n.start == null && n.spanStart == null && (!filtering || pass(n)));
       for (const n of dated) { rows.push({ type: "task", n }); shown++; }
       if (this.showUndated) for (const n of undated) { rows.push({ type: "task", n }); shown++; }

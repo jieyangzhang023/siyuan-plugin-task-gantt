@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.7.4
+- Sort by start time: a subtask that starts on the same day as its parent is now listed directly under the parent (grandchildren likewise); subtasks with a later start keep their own place. Parents still come before plain tasks that share the start date.
+
 ## 0.7.3
 - Sort by start time: tasks with the same start date now list parent tasks (those with subtasks) first, then by end date as before.
 
