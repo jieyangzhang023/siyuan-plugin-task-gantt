@@ -26,18 +26,19 @@ const ok = (c, msg) => { console.log(c ? "PASS" : "FAIL", msg); if (!c) process.
 // mock host over a COPY of real data
 let data = JSON.parse(JSON.stringify(R)); let saves = 0;
 const host = { loadReminderData: async () => JSON.parse(JSON.stringify(data)), saveReminderData: async (d) => { data = JSON.parse(JSON.stringify(d)); saves++; }, loadProjectData: async () => Pj };
-const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name: "siyuan-plugin-task-note-management" })] }; plugin.undoStack = [];
+const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
 
 (async () => {
-  // synthetic data only. No host plugin is installed: tasks live in the plugin's own store.
-  const mk = () => { const p = new Plugin(); p.app = { plugins: [] }; p.onload(); return p; };
+  // synthetic data only: tasks live in the plugin's own store
+  const cmds = []; const mk = () => { const p = new Plugin(); p.app = { plugins: [] }; p.addCommand = (c) => cmds.push(c.langText); p.onload(); return p; };
   const view = async (p) => { const r = El("div"); const v = new GanttView(r, p); v.done = "all"; v.showUndated = true; await v.reload(); await new Promise((x) => setTimeout(x, 20)); return v; };
   const mouse = { preventDefault() {}, target: {}, clientX: 0, clientY: 0 };
   const nodeOf = (v, id) => { let r = null; const w = (x) => { if (x.id === id) r = x; x.children.forEach(w); }; v.model.groups.forEach((g) => g.roots.forEach(w)); return r; };
 
-  const P = mk(); ok((await P.initMode()) === "own" && P.getHost() === P.own, "no host installed -> own mode");
+  const P = mk(); ok(P.getHost() === P.own, "tasks live in the plugin's own store");
+  ok(cmds.length > 0 && !cmds.some((c) => /任务笔记管理|独立|导入|切回/.test(c)), "no migration commands are registered: " + cmds.join(" | "));
   let v = await view(P); ok(count(v.el, "tg-empty") >= 1 || true, "empty store renders");
-  ok(JSON.stringify(v.el, (k, val) => (k === "listeners" ? undefined : val)).includes("项目…") && !JSON.stringify(v.el, (k, val) => (k === "listeners" ? undefined : val)).includes("切换为独立模式"), "own mode toolbar: 项目… shown, 切换 hidden");
+  ok(JSON.stringify(v.el, (k, val) => (k === "listeners" ? undefined : val)).includes("项目…") && !JSON.stringify(v.el, (k, val) => (k === "listeners" ? undefined : val)).includes("切换为独立模式"), "toolbar: 项目… shown, no 切换为独立模式 button");
 
   // projects
   const pid = await P.saveProject({ title: "项目甲", color: "#112233" });
@@ -89,31 +90,6 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
   err = null; try { await P.deleteProject(pid2); } catch (e) { err = e; }
   const delN = await P.deleteProject(pid); ok(delN >= 1 && !P.store["projects.json"][pid] && !P.store["tasks.json"][a.id].projectId, "deleteProject keeps tasks, they become unclassified (" + delN + ")");
 
-  // import from the host's files
-  const hostTasks = { H1: { id: "H1", title: "来自旧插件", completed: false, kanbanStatus: "doing", date: "2026-11-01" }, H2: { id: "H2", title: "子", parentId: "H1", completed: true } };
-  const hostProj = { Pj: { id: "Pj", title: "旧项目" }, _initializedDefaultInbox: true };
-  global.__kernel = async (u, b) => {
-    if (u === "/api/file/getFile") return b.path.endsWith("reminder.json") ? hostTasks : b.path.endsWith("project.json") ? hostProj : { code: 404, msg: "not found" };
-    return { code: 0, data: null };
-  };
-  const stores0 = Object.keys(P.store).filter((k) => k.startsWith("backup-own")).length;
-  const imp = await P.importFromHost();
-  ok(imp.tasks === 2 && imp.projects === 1 && P.store["tasks.json"].H1.title === "来自旧插件" && P.store["projects.json"].Pj.title === "旧项目" && P.store["mode.json"].mode === "own", "import copies tasks and projects, records own mode");
-  ok(Object.keys(P.store).filter((k) => k.startsWith("backup-own")).length === stores0 + 1, "existing own data is backed up before being replaced");
-  global.__kernel = async () => ({ code: 404, msg: "no such file" }); err = null; try { await P.importFromHost(); } catch (e) { err = e; } ok(!!err, "import fails cleanly when the host files are missing");
-  global.__kernel = async (u, b) => (b.path.endsWith("reminder.json") ? {} : hostProj); err = null; try { await P.importFromHost(); } catch (e) { err = e; } ok(!!err && P.store["tasks.json"].H1, "empty host data is refused and nothing is overwritten");
-
-  // switching back needs the host
-  err = null; try { await P.setMode("host"); } catch (e) { err = e; } ok(!!err && P.mode === "own", "cannot switch to host mode when it is not installed");
-
-  // with the host installed and no choice made yet, the old behaviour is kept
-  const hostObj = { name: "siyuan-plugin-task-note-management", loadReminderData: async () => ({}), saveReminderData: async () => {}, loadProjectData: async () => ({}) };
-  const Q = new Plugin(); Q.app = { plugins: [hostObj] }; Q.onload(); ok((await Q.initMode()) === "host" && Q.getHost() === hostObj, "host installed + nothing chosen -> host mode (unchanged behaviour)");
-  const vq = await view(Q); const html = JSON.stringify(vq.el, (k, val) => (k === "listeners" ? undefined : val));
-  ok(html.includes("切换为独立模式") && !html.includes("项目…"), "host mode toolbar: 切换为独立模式 shown, 项目… hidden");
-  menus.length = 0; Q.undoStack = []; vq.taskMenu(mouse, { t: { id: "x", title: "x" }, children: [], parent: null }); ok(!menus[0].items.includes("删除任务…"), "host mode menu has no delete");
-  await Q.setMode("own"); ok(Q.mode === "own" && Q.getHost() === Q.own, "setMode(own) switches the source");
-  await Q.setMode("host"); ok(Q.mode === "host" && Q.getHost() === hostObj, "setMode(host) switches back");
   // toast: no null child (it rendered as the text "null" after messages without an undo button)
   const vt = await view(P); vt.say("无撤销提示", false); ok(vt.toast.children.length === 1 && vt.toast.children.every((c) => c != null), "say(text, false) has no null child");
   vt.say("带撤销", true); ok(vt.toast.children.length === 2 && vt.toast.children.every((c) => c != null), "say(text, true) has the undo button");

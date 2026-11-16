@@ -1,7 +1,6 @@
 "use strict";
 const { Plugin, openTab, showMessage, Menu, Dialog, fetchSyncPost, confirm: sConfirm } = require("siyuan");
 
-const HOST = "siyuan-plugin-task-note-management";
 const TAB = "gantt";
 const DAY = 86400000;
 const ROW_H = 34;
@@ -18,7 +17,7 @@ const MAX_DAY_CELLS = 900; // above this many days, the header uses weekly label
 const STATE_COLOR = { open: "#3b82f6", done: "#22a05a", late: "#e5484d", dropped: "#8a8f98" };
 const PRIO = { high: "高", medium: "中", low: "低" };
 const LOG_FILE = "progress-log.json";
-const TASKS_FILE = "tasks.json", PROJECTS_FILE = "projects.json", MODE_FILE = "mode.json"; // the plugin's own task store (same record shape as Task Note Management)
+const TASKS_FILE = "tasks.json", PROJECTS_FILE = "projects.json"; // the plugin's own task store
 const HIDDEN_FILE = "summary-hidden.json"; // task ids kept out of the 今日 / 未排期 lists (their subtasks too)
 const RE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
 const KANBAN = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃", completed: "已完成" };
@@ -242,12 +241,7 @@ class GanttView {
   get host() { return this.plugin.getHost(); }
 
   async reload() {
-    await this.plugin.initMode();
     const host = this.host;
-    if (!host) {
-      this.el.replaceChildren(h("div", { class: "tg-empty" }, "未找到任务数据源（「任务笔记管理」未启用，且尚未切换为独立模式）。"));
-      return;
-    }
     try {
       this.reminders = await host.loadReminderData(true);
       this.projects = await host.loadProjectData(true);
@@ -431,10 +425,8 @@ class GanttView {
     const legend = h("span", { class: "tg-legend" }, [["open", "未完成"], ["done", "已完成"], ["late", "超期（红色延伸段）"], ["dropped", "已放弃"]].map(([k, t]) =>
       h("span", { class: "tg-lg" }, h("i", { class: k === "late" ? "tg-lgl" : "", style: `background-color:${STATE_COLOR[k]}` }), t)));
     const addBtn = h("button", { class: "b3-button b3-button--text", onclick: () => this.openCreate({}) }, "＋ 新建任务");
-    const own = this.plugin.mode === "own";
-    const projBtn = own ? h("button", { class: "b3-button b3-button--outline", title: "新建、改名、改颜色、删除项目", onclick: () => this.openProjects() }, "项目…") : null;
-    const modeBtn = !own ? h("button", { class: "b3-button b3-button--outline", title: "把任务和项目复制到本插件自己的存储，之后不再依赖「任务笔记管理」", onclick: () => this.importHostData() }, "切换为独立模式…") : null;
-    return h("div", { class: "tg-bar" }, addBtn, search, sortSel, projSel, statusSel, doneSel, zoomBtns, und, today, foldBtn, undoBtn, refresh, projBtn, modeBtn, legend, info);
+    const projBtn = h("button", { class: "b3-button b3-button--outline", title: "新建、改名、改颜色、删除项目", onclick: () => this.openProjects() }, "项目…");
+    return h("div", { class: "tg-bar" }, addBtn, search, sortSel, projSel, statusSel, doneSel, zoomBtns, und, today, foldBtn, undoBtn, refresh, projBtn, legend, info);
   }
 
   // Leaf tasks that matter right now. Overdue uses stateOf (an end date in the past); open-ended tasks are never overdue.
@@ -795,7 +787,7 @@ class GanttView {
     else if (inherited) menu.addItem({ icon: "iconEye", label: "已随上级任务在摘要中隐藏", disabled: true });
     else menu.addItem({ icon: "iconEyeoff", label: "不在摘要中显示（含子任务）", click: async () => { try { await this.plugin.setHidden(t.id, true); this.say(`「${t.title}」及其子任务不再计入今日 / 未排期（超期仍会显示）`, false); this.render(); } catch (e) { showMessage("操作失败：" + e, 4000, "error"); } } });
     if (nLog) menu.addItem({ icon: "iconList", label: `查看进度记录（${nLog}）`, click: () => this.openProgressList(n) });
-    if (this.plugin.mode === "own") menu.addItem({ icon: "iconTrashcan", label: "删除任务…", click: () => this.deleteTask(t) });
+    menu.addItem({ icon: "iconTrashcan", label: "删除任务…", click: () => this.deleteTask(t) });
     if ((t.blockId || t.docId) && this.dead.has(t.id)) {
       menu.addItem({ icon: "iconTrashcan", label: "绑定的文档已被删除，解除绑定", click: () => this.unbind(t) });
       if (!t.completed && !(t.repeat && t.repeat.enabled) && !t.isRepeatInstance) menu.addItem({ icon: "iconAdd", label: "重新创建文档并绑定…", click: () => this.openCreateDoc(t) });
@@ -946,7 +938,7 @@ class GanttView {
     if (!notebooks.length) { showMessage("没有已打开的笔记本", 4000, "error"); return; }
     const nbName = new Map(notebooks.map((n) => [n.id, n.name]));
     let defNb = "";
-    try { const st = this.host && typeof this.host.loadSettings === "function" ? await this.host.loadSettings() : null; defNb = (st && st.newDocNotebook) || ""; } catch (e) { /* ignore */ }
+    defNb = lsGet("tg-lastnb", ""); // the notebook used last time
     if (!nbName.has(defNb)) defNb = notebooks[0].id;
 
     // candidates pinned on top: the project's own document, and the parent used last time
@@ -1025,6 +1017,7 @@ class GanttView {
       try {
         const docId = await this.plugin.createDocAndBind(t.id, { title: name, box: p ? p.box : nb.value, parentHPath: p ? p.hpath : "/" });
         if (p) lsSet("tg-lastdoc", p.id);
+        lsSet("tg-lastnb", p ? p.box : nb.value);
         dlg.destroy();
         this.say(`已创建文档「${name}」并绑定到任务`, false);
         if (open.checked) { try { openTab({ app: this.plugin.app, doc: { id: docId } }); } catch (e) { /* ignore */ } }
@@ -1131,7 +1124,7 @@ class GanttView {
   async toggleDone(t) {
     const done = !t.completed;
     if ((t.repeat && t.repeat.enabled) || t.isRepeatInstance) {
-      showMessage("重复任务的完成逻辑较复杂，请在「任务笔记管理」中操作", 5000, "info");
+      showMessage("重复任务的完成逻辑较复杂，甘特图暂不支持标记完成", 5000, "info");
       return;
     }
     try {
@@ -1145,17 +1138,6 @@ class GanttView {
       if (pending > 0) sConfirm("标记完成", `「${t.title}」还有 ${pending} 个未完成的子任务，将一并标记为已完成。继续？`, run);
       else await run();
     } catch (err) { showMessage("操作失败：" + err, 5000, "error"); }
-  }
-
-  importHostData() {
-    sConfirm("切换为独立模式", "将把「任务笔记管理」里的全部任务和项目复制到本插件自己的存储，并从此只用本插件的数据。原插件的数据不会被修改或删除，但之后两边不再同步。可以随时用命令「切回任务笔记管理的数据」切回。继续？", async () => {
-      try {
-        const r = await this.plugin.importFromHost();
-        this.undoStack && (this.plugin.undoStack.length = 0);
-        this.say(`已导入 ${r.tasks} 个任务、${r.projects} 个项目，现在使用独立数据`, false);
-        this.reload();
-      } catch (err) { showMessage("导入失败：" + err, 7000, "error"); }
-    });
   }
 
   // project manager (own store): rename / recolor in place, add, delete (its tasks become 未分类)
@@ -1201,16 +1183,7 @@ class GanttView {
     });
   }
 
-  async editTask(t) {
-    const host = this.host;
-    if (this.plugin.mode === "own") { this.openCreate({}, t); return; }
-    if (!host || typeof host.openReminderEditDialog !== "function") {
-      showMessage("当前版本的「任务笔记管理」不支持从外部打开编辑弹窗，请升级该插件", 5000, "error");
-      return;
-    }
-    const ok = await host.openReminderEditDialog(t.blockId || "", t.id);
-    if (ok === false) showMessage("未能打开编辑弹窗", 3000, "error");
-  }
+  editTask(t) { this.openCreate({}, t); }
 
   taskBar(n, color, state, doing, tailW) {
     const t = n.t;
@@ -1418,7 +1391,6 @@ class GanttView {
 module.exports = class TaskGanttPlugin extends Plugin {
   onload() {
     this.undoStack = []; // [{label, before:{id: record|null}}] — whole-record snapshots taken before each write
-    this.mode = null; // "own" = tasks live in this plugin's storage; "host" = read/write Task Note Management's data. Decided by initMode().
     const self = this;
     // same four methods as the host plugin, so every task read/write goes through one interface in either mode
     const read = async (file, ref) => {
@@ -1447,8 +1419,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
       },
     });
     this.addTopBar({ icon: "iconTaskGantt", title: "任务甘特图", position: "right", callback: () => this.open() });
-    this.addCommand({ langKey: "importHostData", langText: "从「任务笔记管理」导入任务并切换为独立模式", hotkey: "", callback: () => this.importFromHost().then((r) => showMessage(`已导入 ${r.tasks} 个任务、${r.projects} 个项目，请重新打开甘特图`, 6000, "info")).catch((e) => showMessage("导入失败：" + e, 7000, "error")) });
-    this.addCommand({ langKey: "useHostData", langText: "切回「任务笔记管理」的数据", hotkey: "", callback: () => this.setMode("host").then(() => showMessage("已切回任务笔记管理的数据，请重新打开甘特图", 5000, "info")).catch((e) => showMessage("切换失败：" + e, 6000, "error")) });
     this.addCommand({ langKey: "openTaskGantt", langText: "打开任务甘特图", hotkey: "", callback: () => this.open() });
   }
 
@@ -1456,52 +1426,8 @@ module.exports = class TaskGanttPlugin extends Plugin {
     openTab({ app: this.app, custom: { icon: "iconTaskGantt", title: "任务甘特图", data: {}, id: this.name + TAB } });
   }
 
-  findHost() {
-    const list = (this.app && this.app.plugins) || [];
-    const p = list.find((x) => x.name === HOST);
-    return p && typeof p.loadReminderData === "function" && typeof p.saveReminderData === "function" ? p : null;
-  }
-
-  // the object every task read/write goes through: this plugin's own store, or Task Note Management when that is the chosen source
-  getHost() { return this.mode === "own" ? this.own : this.findHost(); }
-
-  // First run: use the host's data when it is installed and nothing was chosen yet (the old behaviour); without it, start with an empty own store.
-  async initMode() {
-    if (this.mode) return this.mode;
-    let m = null;
-    try { m = await this.loadData(MODE_FILE); } catch (e) { /* none yet */ }
-    const hostOk = !!this.findHost();
-    this.mode = m && m.mode === "own" ? "own" : m && m.mode === "host" && hostOk ? "host" : hostOk ? "host" : "own";
-    return this.mode;
-  }
-
-  async setMode(mode) {
-    if (mode === "host" && !this.findHost()) throw new Error("未检测到已启用的「任务笔记管理」插件");
-    await this.saveData(MODE_FILE, { mode, changedAt: new Date().toISOString() });
-    this.mode = mode;
-    this.own.reset();
-  }
-
-  // Copy Task Note Management's tasks and projects into this plugin's store and switch to it. The host's files are only read.
-  async importFromHost() {
-    const get = async (name) => {
-      const r = await fetchSyncPost("/api/file/getFile", { path: `/data/storage/petal/${HOST}/${name}` });
-      if (!r || typeof r !== "object" || Array.isArray(r) || (typeof r.code === "number" && r.code !== 0 && typeof r.msg === "string")) throw new Error(`读取 ${name} 失败：${(r && r.msg) || "文件不存在"}`);
-      return r;
-    };
-    const tasks = await get("reminder.json"), projects = await get("project.json");
-    const nTasks = Object.values(tasks).filter((t) => t && typeof t === "object" && t.id).length;
-    if (!nTasks) throw new Error("reminder.json 里没有任务，已取消");
-    const cur = await this.own.loadReminderData(true), curP = await this.own.loadProjectData(true);
-    if (Object.keys(cur).length || Object.keys(curP).length) { // never silently replace data that was already collected here
-      const d = new Date(), p = (n) => String(n).padStart(2, "0");
-      await this.saveData(`backup-own-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`, { tasks: cur, projects: curP });
-    }
-    await this.saveData(TASKS_FILE, tasks); await this.saveData(PROJECTS_FILE, projects);
-    await this.saveData(MODE_FILE, { mode: "own", importedFrom: HOST, importedAt: new Date().toISOString() });
-    this.mode = "own"; this.own.reset();
-    return { tasks: nTasks, projects: Object.values(projects).filter((x) => x && typeof x === "object" && x.id).length };
-  }
+  // every task read/write goes through this object (see onload): the plugin's own store
+  getHost() { return this.own; }
 
   async backupOnce(data) {
     const d = new Date();
@@ -1549,7 +1475,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
   // drop a binding whose block is gone (blockId/docId/docTitle); refuses if the block still exists
   async unbindDoc(taskId) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
     const data = await host.loadReminderData(true);
     const t = data && data[taskId];
     if (!t) throw new Error("任务已不存在");
@@ -1561,7 +1486,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
     delete t.blockId; delete t.docId; delete t.docTitle;
     await host.saveReminderData(data);
     this.pushUndo(`解除绑定「${t.title}」`, before);
-    try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
     window.dispatchEvent(new CustomEvent("reminderUpdated"));
   }
 
@@ -1593,7 +1517,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
   // task.blockId/docId/docTitle, plus the block attributes (bookmark, custom-bind-reminders, custom-task-projectId).
   async createDocAndBind(taskId, { title, box, parentHPath }) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
     const before = await host.loadReminderData(true);
     const t0 = before && before[taskId];
     if (!t0) throw new Error("任务已不存在");
@@ -1613,7 +1536,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
       const a = await fetchSyncPost("/api/attr/setBlockAttrs", { id: docId, attrs: { bookmark: "⏰", "custom-bind-reminders": taskId, "custom-task-projectId": t.projectId || "" } });
       if (!a || a.code !== 0) throw new Error((a && a.msg) || "setBlockAttrs");
     } catch (e) { showMessage("文档已创建并绑定，但写入块属性失败：" + e, 6000, "info"); }
-    try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
     window.dispatchEvent(new CustomEvent("reminderUpdated"));
     return docId;
   }
@@ -1634,22 +1556,19 @@ module.exports = class TaskGanttPlugin extends Plugin {
     if (!e) return null;
     try {
       const host = this.getHost();
-      if (!host) throw new Error("未找到任务笔记管理插件");
       const data = await host.loadReminderData(true);
       await this.backupOnce(data);
       for (const [id, rec] of Object.entries(e.before)) { if (rec) data[id] = rec; else delete data[id]; }
       if (Object.keys(e.before).length) await host.saveReminderData(data);
       if (e.logAdd) await this.removeProgress(e.logAdd.taskId, e.logAdd.entryId);
       if (e.logRestore) { if (!this.log) await this.loadLog(); Object.assign(this.log, e.logRestore); await this.saveLog(); }
-      try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (x) { /* ignore */ }
-      window.dispatchEvent(new CustomEvent("reminderUpdated"));
+        window.dispatchEvent(new CustomEvent("reminderUpdated"));
       return e.label;
     } catch (err) { this.undoStack.push(e); throw err; }
   }
 
   async createTask({ title, date, endDate, projectId, parentId, priority, kanbanStatus }) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
     if (!title || !RE_DATE.test(date) || (endDate && !RE_DATE.test(endDate))) throw new Error("标题或日期无效");
     const data = await host.loadReminderData(true);
     const parent = parentId ? data[parentId] : null;
@@ -1667,7 +1586,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
     data[id] = rec;
     await host.saveReminderData(data);
     this.pushUndo(`新建「${title}」`, { [id]: null });
-    try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
     window.dispatchEvent(new CustomEvent("reminderUpdated"));
     return rec;
   }
@@ -1675,7 +1593,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
   // Edit a task's own fields. Moving it to another project moves its subtasks too; renaming refreshes the cached parent title on its children.
   async updateTask(id, f) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务数据源");
     const data = await host.loadReminderData(true);
     const t = data && data[id];
     if (!t) throw new Error("任务已不存在");
@@ -1714,7 +1631,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
   // Delete a task and all its subtasks (own store only). Its progress records go with it and come back on undo.
   async deleteTask(id) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务数据源");
     const data = await host.loadReminderData(true);
     const t = data && data[id];
     if (!t) throw new Error("任务已不存在");
@@ -1781,7 +1697,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
 
   async countPendingDescendants(id) {
     const host = this.getHost();
-    if (!host) return 0;
     const data = await host.loadReminderData(true);
     return this.descendantsOf(data, id).filter((x) => !x.completed && !(x.repeat && x.repeat.enabled)).length;
   }
@@ -1817,7 +1732,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
     text = String(text || "").trim();
     if (!text) throw new Error("请填写成果内容");
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
     const data = await host.loadReminderData(true);
     const t = data && data[taskId];
     if (!t) throw new Error("任务已不存在");
@@ -1883,7 +1797,6 @@ module.exports = class TaskGanttPlugin extends Plugin {
   // pending mobile notifications are cancelled. Block-attribute sync and recurring tasks are NOT handled here.
   async setCompleted(id, done) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
     const data = await host.loadReminderData(true);
     const t = data && data[id];
     if (!t) throw new Error("任务已不存在");
@@ -1900,17 +1813,12 @@ module.exports = class TaskGanttPlugin extends Plugin {
     if (done) for (const x of this.descendantsOf(data, id)) if (!(x.repeat && x.repeat.enabled)) apply(x);
     await host.saveReminderData(data);
     this.pushUndo(`${done ? "完成" : "取消完成"}「${t.title}」`, before);
-    if (done && typeof host.cancelMobileNotification === "function") {
-      for (const cid of changed) { try { await host.cancelMobileNotification(cid); } catch (e) { /* ignore */ } }
-    }
-    try { if (typeof host.updateBadges === "function") host.updateBadges(); } catch (e) { /* ignore */ }
     window.dispatchEvent(new CustomEvent("reminderUpdated"));
     return changed.length;
   }
 
   async commitDates(id, startNum, endNum) {
     const host = this.getHost();
-    if (!host) throw new Error("未找到任务笔记管理插件");
     const data = await host.loadReminderData(true);
     const t = data && data[id];
     if (!t) throw new Error("任务已不存在");

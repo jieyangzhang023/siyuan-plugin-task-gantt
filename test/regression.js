@@ -26,7 +26,7 @@ const ok = (c, msg) => { console.log(c ? "PASS" : "FAIL", msg); if (!c) process.
 // mock host over a COPY of real data
 let data = JSON.parse(JSON.stringify(R)); let saves = 0;
 const host = { loadReminderData: async () => JSON.parse(JSON.stringify(data)), saveReminderData: async (d) => { data = JSON.parse(JSON.stringify(d)); saves++; }, loadProjectData: async () => Pj };
-const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name: "siyuan-plugin-task-note-management" })] }; plugin.undoStack = [];
+const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
 
 (async () => {
   // ---- render across all views, with filters
@@ -152,9 +152,8 @@ const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name
     const d2 = v.openCreate({}); d2.ctl.title.value = "x"; d2.ctl.start.value = "2026-05-02"; d2.ctl.end.value = "2026-05-01"; await d2.submit(false); ok(Object.keys(data).length === n0, "end<start rejected");
     d2.ctl.title.value = ""; d2.ctl.end.value = ""; await d2.submit(false); ok(Object.keys(data).length === n0, "empty title rejected");
     // create and edit
-    let edited = null; plugin.app.plugins[0].openReminderEditDialog = async (b, id) => { edited = id; return true; };
-    const d3 = v.openCreate({}); d3.ctl.title.value = "编辑后"; await d3.submit(true); const m3 = Object.values(data).find((t) => t.title === "编辑后");
-    ok(m3 && edited === m3.id, "创建并编辑 opens host edit dialog for new task"); await plugin.undoLast();
+    global.__dlg = null; const d3 = v.openCreate({}); d3.ctl.title.value = "编辑后"; await d3.submit(true); const m3 = Object.values(data).find((t) => t.title === "编辑后");
+    ok(m3 && global.__dlg && /编辑任务/.test(global.__dlg.o.title) && global.__dlg.o.title.includes("编辑后"), "创建并编辑 opens the built-in edit dialog for the new task"); await plugin.undoLast();
     // subtask preset locks project to parent's
     const d4 = v.openCreate({ parentId: par.id, date: v.model.today }); ok(d4.ctl.project.value === (par.projectId || "") && d4.ctl.parent.value === par.id, "subtask dialog preselects parent+project");
     // parent choices only unfinished tasks of that project

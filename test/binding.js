@@ -26,7 +26,7 @@ const ok = (c, msg) => { console.log(c ? "PASS" : "FAIL", msg); if (!c) process.
 // mock host over a COPY of real data
 let data = JSON.parse(JSON.stringify(R)); let saves = 0;
 const host = { loadReminderData: async () => JSON.parse(JSON.stringify(data)), saveReminderData: async (d) => { data = JSON.parse(JSON.stringify(d)); saves++; }, loadProjectData: async () => Pj };
-const plugin = new Plugin(); plugin.app = { plugins: [Object.assign(host, { name: "siyuan-plugin-task-note-management" })] }; plugin.undoStack = [];
+const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
 
 (async () => {
   // synthetic data only. X = bound doc that was deleted, Y = bound doc that exists, Z = unbound

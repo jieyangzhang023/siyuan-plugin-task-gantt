@@ -2,6 +2,10 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.9.0
+- **The plugin is now fully standalone.** Removed everything that referred to Task Note Management: the 「切换为独立模式…」 toolbar button, the import / switch-back commands, the host data mode, and every call into the host plugin. Tasks and projects always live in this plugin's storage (`tasks.json`, `projects.json`). A fresh install starts empty. The new-document dialog remembers the notebook used last time instead of reading the host's setting. Repeating tasks can no longer be completed from the chart.
+- Existing `tasks.json` / `projects.json` (including data imported in 0.8.x) keep working unchanged.
+
 ## 0.8.1
 - Fix: toast messages without an undo button (e.g. after switching to standalone mode, creating a document) showed a stray "null".
 
