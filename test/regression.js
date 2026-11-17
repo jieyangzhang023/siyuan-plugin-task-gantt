@@ -287,6 +287,21 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     let threw2 = false; try { await plugin.createDocAndBind(task.id, { title: "x", box: "nb1", parentHPath: "/" }); } catch (e) { threw2 = /已经绑定/.test(e.message); } ok(threw2, "refuses to rebind a bound task");
   }
 
+  // ---- not-started tasks get their own colour
+  { const td = v.model.today; const N = (o) => ({ t: { id: "np", title: "未来", kanbanStatus: "doing", completed: false, ...(o.t || {}) }, children: [], depth: 0, kind: "own", noEnd: false, progress: 0, leaves: 1, doneLeaves: 0, spanStart: td + 3, spanEnd: td + 6, start: td + 3, end: td + 6, ...o, t: undefined });
+    const mk = (o) => { const n = N(o); n.t = { id: "np", title: "未来", kanbanStatus: "doing", completed: false, ...(o.t || {}) }; return n; };
+    ok(v.isPending(mk({})) === true, "future start, open -> not started");
+    ok(v.isPending(mk({ spanStart: td, start: td })) === false, "starts today -> in progress, not pending");
+    ok(v.isPending(mk({ spanStart: td - 2, start: td - 2, spanEnd: td + 1, end: td + 1 })) === false, "already started -> not pending");
+    ok(v.isPending(mk({ t: { completed: true } })) === false, "done is never pending");
+    ok(v.isPending(mk({ t: { kanbanStatus: "abandoned" } })) === false, "abandoned is never pending");
+    ok(v.isPending(mk({ spanStart: null, start: null, kind: null })) === false, "unscheduled is not pending");
+    const out = JSON.stringify(v.renderTask(mk({}), 2000), (k, x) => (k === "listeners" ? undefined : x));
+    ok(out.includes("--c:#8b5cf6"), "not-started bar drawn in the not-started colour");
+    const out2 = JSON.stringify(v.renderTask(mk({ spanStart: td - 1, start: td - 1, end: td + 2, spanEnd: td + 2 }), 2000), (k, x) => (k === "listeners" ? undefined : x));
+    ok(out2.includes("--c:#3b82f6") && !out2.includes("#8b5cf6"), "started bar keeps the normal colour");
+  }
+
   // ---- resize + destroy
   v.startResize({ button: 0, clientX: 300, pointerId: 1, currentTarget: El("i"), preventDefault() {}, stopPropagation() {} });
   v.destroy(); ok((winL.keydown || []).length === 0 && (winL.pointerdown || []).length === 0, "destroy removed window listeners");

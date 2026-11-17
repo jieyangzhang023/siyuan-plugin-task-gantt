@@ -18,7 +18,8 @@ A Gantt chart and project pages for your tasks inside SiYuan: group tasks by pro
 
 | Element | Meaning |
 |---|---|
-| Blue bar | Open |
+| Purple bar | Not started yet: open, and its first day is still ahead |
+| Blue bar | Open (in progress, or started and not done) |
 | Green bar | Done (struck-through title, ✓ prefix) |
 | Red hatched tail | Overdue: open and the end date has passed; drawn from the end date to today, title prefixed with `!` |
 | Ring / bold title | In progress today |

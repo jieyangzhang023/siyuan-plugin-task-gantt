@@ -1,6 +1,9 @@
 # Changelog
 
-Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
+Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
+
+## 0.12.0
+- Tasks that have not started yet (open, first day still ahead) are drawn in purple, with a legend entry and a 「未开始」 note on the hover card. Parent summary bars follow the same rule.
 
 ## 0.11.0
 - 「创建文档并绑定」: the parent document is now picked from the full notebook tree (collapsed at first, levels load when opened); search and the ★ shortcuts still work.

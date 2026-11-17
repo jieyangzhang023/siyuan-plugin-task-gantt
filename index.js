@@ -14,7 +14,7 @@ const DONE_OPTIONS = [["open", "仅未完成"], ["r7", "含近一周完成"], ["
 const FAR_AHEAD = 730; // timeline never extends more than ~2 years past today
 const FAR_BACK = 1100; // ...or ~3 years before today
 const MAX_DAY_CELLS = 900; // above this many days, the header uses weekly labels instead of one node per day
-const STATE_COLOR = { open: "#3b82f6", done: "#22a05a", late: "#e5484d", dropped: "#8a8f98" };
+const STATE_COLOR = { open: "#3b82f6", done: "#22a05a", late: "#e5484d", dropped: "#8a8f98", pending: "#8b5cf6" };
 const PRIO = { high: "高", medium: "中", low: "低" };
 const LOG_FILE = "progress-log.json";
 const TASKS_FILE = "tasks.json", PROJECTS_FILE = "projects.json"; // the plugin's own task store
@@ -505,7 +505,7 @@ class GanttView {
     const undoBtn = h("button", { class: "b3-button b3-button--outline", disabled: !this.plugin.undoStack.length, title: "撤销上一步改动（Ctrl+Z）", onclick: () => this.undo() }, "撤销");
     const refresh = h("button", { class: "b3-button b3-button--outline", onclick: () => this.reload() }, "刷新");
     const info = h("span", { class: "tg-info" }, `${shown} 条${hidden ? `，另有 ${hidden} 条未排期已隐藏` : ""} · 拖空白处平移 · 项目行或 Shift+拖任务行空白处=新建 · Ctrl+滚轮缩放 · 双击/右键编辑`);
-    const legend = h("span", { class: "tg-legend" }, [["open", "未完成"], ["done", "已完成"], ["late", "超期（红色延伸段）"], ["dropped", "已放弃"]].map(([k, t]) =>
+    const legend = h("span", { class: "tg-legend" }, [["pending", "未开始"], ["open", "进行中/未完成"], ["done", "已完成"], ["late", "超期（红色延伸段）"], ["dropped", "已放弃"]].map(([k, t]) =>
       h("span", { class: "tg-lg" }, h("i", { class: k === "late" ? "tg-lgl" : "", style: `background-color:${STATE_COLOR[k]}` }), t)));
     const addBtn = h("button", { class: "b3-button b3-button--text", onclick: () => this.openCreate({}) }, "＋ 新建任务");
     const projBtn = h("button", { class: "b3-button b3-button--outline", title: "打开项目管理页", onclick: () => this.plugin.openProjects() }, "项目…");
@@ -755,7 +755,7 @@ class GanttView {
     const parent = t.parentTitle || (n.parent && n.parent.t.title) || "";
     let status;
     if (t.completed) status = "已完成" + (t.completedTime ? " · " + t.completedTime : "");
-    else status = KANBAN[t.kanbanStatus] || t.kanbanStatus || "未完成";
+    else status = (this.isPending(n) ? "未开始 · " : "") + (KANBAN[t.kanbanStatus] || t.kanbanStatus || "未完成");
     const lateEnd = n.spanEnd != null ? n.spanEnd : n.end;
     const overdue = this.stateOf(n) === "late" ? `已逾期 ${today - lateEnd} 天` : null;
     const note = (t.note || "").trim();
@@ -790,7 +790,8 @@ class GanttView {
     const hasKids = !flat && n.children.length > 0, folded = this.fold.has(n.id);
     const projName = this.projects[t.projectId] && this.projects[t.projectId].title;
     const depth = flat ? 0 : n.depth;
-    const barColor = state === "late" ? STATE_COLOR.open : color; // overdue is shown by the red tail, not by recoloring the whole bar
+    const pending = this.isPending(n, state); // open and not yet started: its own colour
+    const barColor = state === "late" ? STATE_COLOR.open : pending ? STATE_COLOR.pending : color; // overdue is shown by the red tail, not by recoloring the whole bar
     const doing = state === "open" && n.spanStart != null && n.spanStart <= this.model.today && n.spanEnd >= this.model.today;
     const label = h("div", { class: "tg-label" },
       depth ? h("i", { class: "tg-indent", style: `width:${depth * 16}px` }) : null,
@@ -842,6 +843,11 @@ class GanttView {
   }
 
   // done = green, overdue (not done and past its end date) = red, otherwise open = blue
+  // an open task whose first day is still ahead (an abandoned one stays grey/blue as before)
+  isPending(n, state) {
+    return (state || this.stateOf(n)) === "open" && n.t.kanbanStatus !== "abandoned" && n.spanStart != null && n.spanStart > this.model.today;
+  }
+
   stateOf(n) {
     const done = n.t.completed || (n.children.length > 0 && n.doneLeaves === n.leaves);
     if (done) return "done";
