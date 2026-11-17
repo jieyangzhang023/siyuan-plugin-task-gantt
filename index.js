@@ -268,8 +268,7 @@ class GanttView {
     this._onData = () => { clearTimeout(this._t); this._t = setTimeout(() => { if (!this.dragging) this.reload(); }, 250); };
     window.addEventListener("reminderUpdated", this._onData);
     window.addEventListener("projectUpdated", this._onData);
-    this._onProj = (e) => { this.project = (e && e.detail && e.detail.id) || ""; lsSet("tg-project", this.project); this.render(); }; // sent by the project page
-    window.addEventListener("tg-project", this._onProj);
+    (plugin.ganttViews || (plugin.ganttViews = new Set())).add(this); // the project page switches the chart's project through this, not through window events
     this.el.classList.add("tg");
     this.reload();
   }
@@ -277,7 +276,7 @@ class GanttView {
   destroy() {
     window.removeEventListener("reminderUpdated", this._onData);
     window.removeEventListener("projectUpdated", this._onData);
-    window.removeEventListener("tg-project", this._onProj);
+    if (this.plugin.ganttViews) this.plugin.ganttViews.delete(this);
     window.removeEventListener("keydown", this._onKey);
     window.removeEventListener("pointerdown", this._onDown, true);
     clearTimeout(this._t); clearTimeout(this._tt); clearTimeout(this._qt);
@@ -291,6 +290,8 @@ class GanttView {
     e.preventDefault();
     this.undo();
   }
+
+  setProject(id) { this.project = id || ""; lsSet("tg-project", this.project); this.render(); }
 
   async undo() {
     try {
@@ -1505,7 +1506,9 @@ class ProjectsView {
   viewInGantt(id) {
     lsSet("tg-project", id || "");
     this.plugin.open();
-    setTimeout(() => window.dispatchEvent(Object.assign(new CustomEvent("tg-project"), { detail: { id: id || "" } })), 60);
+    const push = () => { for (const g of this.plugin.ganttViews || []) g.setProject(id); };
+    (this._pushT || []).forEach(clearTimeout);
+    push(); this._pushT = [setTimeout(push, 150), setTimeout(push, 600)]; // the tab may be created a moment after openTab returns
   }
 
   pill(text, cls) { return h("span", { class: "tp-pill " + (cls || "") }, text); }

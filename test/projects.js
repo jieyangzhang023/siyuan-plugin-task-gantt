@@ -14,7 +14,7 @@ function El(tag) { const cls = new Set(); const e = { nodeType: 1, tag, children
   e.style.setProperty = () => {}; return e; }
 global.El = El; global.document = { createElement: El, createTextNode: (t) => ({ nodeType: 3, t }) };
 const winL = {}; global.window = { addEventListener(t, f) { (winL[t] ||= []).push(f); }, removeEventListener(t, f) { winL[t] = (winL[t] || []).filter((x) => x !== f); }, dispatchEvent() {} };
-global.CustomEvent = class {}; global.localStorage = { getItem: () => null, setItem() {} };
+global.CustomEvent = class { constructor(type, init) { this.type = type; Object.defineProperty(this, "detail", { get: () => (init && init.detail !== undefined ? init.detail : null) }); } }; global.localStorage = { getItem: () => null, setItem() {} };
 const src = fs.readFileSync(require("path").join(__dirname, "..", "index.js"), "utf8") + "\nmodule.exports.__t = { GanttView, ProjectsView, projectStats, projectTimeline, focusKind };";
 const m = new Module("x"); m.paths = []; m._compile(src, "x.js"); const { GanttView, ProjectsView, projectStats, projectTimeline, focusKind } = m.exports.__t; const Plugin = m.exports;
 const base = process.env.TASK_DATA_DIR || require("path").join(require("os").homedir(), "Documents/siyuan/data/storage/petal/siyuan-plugin-task-note-management"); // read-only: tests run on an in-memory copy
@@ -143,8 +143,8 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   // complete from the page
   await v.toggleDone(P2.store["tasks.json"][t1.id]); ok(P2.store["tasks.json"][t1.id].completed === true, "checkbox completes a task");
   // gantt link
-  events.length = 0; v.viewInGantt(p1); await new Promise((x) => setTimeout(x, 120));
-  ok(events.some((e) => e.detail && e.detail.id === p1), "「在甘特图中查看」 sends the project to the chart");
+  const gvv = new GanttView(El("div"), P2); await gvv.reload(); gvv.project = "other"; v.viewInGantt(p1); await new Promise((x) => setTimeout(x, 120));
+  ok(gvv.project === p1, "「在甘特图中查看」 switches an open chart to the project");
   // unclassified
   v.open("__none"); ok(count(v.el, "tp-detail") === 1 && text(v.el).includes("整理这些任务"), "unclassified detail offers 整理");
   const asg = v.openAssign(); asg.ctl.dest.value = p1; asg.ctl.boxes.forEach((b) => { b.el.checked = b.t.id === t5.id; }); await asg.submit(); await new Promise((x) => setTimeout(x, 20));
@@ -165,7 +165,7 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   // empty store
   const P3 = mk(); const r3 = El("div"); const v3 = new ProjectsView(r3, P3); await v3.reload(); ok(text(v3.el).includes("还没有项目"), "a fresh install shows the empty state");
   // gantt side
-  const gv = new GanttView(El("div"), P2); await gv.reload(); gv._onProj({ detail: { id: p1 } }); ok(gv.project === p1, "the chart switches project when told to");
+  const gv = new GanttView(El("div"), P2); await gv.reload(); gv.setProject(p1); ok(gv.project === p1, "the chart switches project when told to");
   ok(nullAppend === 0, "no null append (" + nullAppend + ")");
   console.log("done");
 })().catch((e) => { console.error("ERR", e); process.exit(1); });

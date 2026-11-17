@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.10.3
+- Fix: the 「甘特图」 button on a project card opened the chart on the wrong project (first all projects, then always the same one). The project id was lost in a read-only `CustomEvent.detail`, and the window event itself did not reliably reach an open chart. The page now switches the open chart directly.
+
 ## 0.10.2
 - Bazaar preparation: icon and preview image, English README (default) with the Chinese one as README_zh_CN.md, screenshots, keywords. No code changes.
 

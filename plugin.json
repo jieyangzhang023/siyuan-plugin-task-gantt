@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-task-gantt",
   "author": "jieyangzhang023",
   "url": "https://github.com/jieyangzhang023/siyuan-plugin-task-gantt",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "minAppVersion": "3.0.0",
   "backends": [
     "all"
