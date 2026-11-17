@@ -2,6 +2,10 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`.
 
+## 0.11.0
+- 「创建文档并绑定」: the parent document is now picked from the full notebook tree (collapsed at first, levels load when opened); search and the ★ shortcuts still work.
+- New / edit task dialog: the parent task is picked from the project's task tree the same way (collapsed at first; the way down to a preset parent is opened); keyword search still works.
+
 ## 0.10.3
 - Fix: the 「甘特图」 button on a project card opened the chart on the wrong project (first all projects, then always the same one). The project id was lost in a read-only `CustomEvent.detail`, and the window event itself did not reliably reach an open chart. The page now switches the open chart directly.
 

@@ -47,6 +47,12 @@ const lsGet = (k, def) => {
 };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 
+// one row of a collapsible tree picker (document tree, parent-task tree)
+function treeRowEl(depth, text, { expandable, isOpen, on, toggle, pick, key }) {
+  const arrow = h("span", { class: "tg-tarrow" + (expandable ? "" : " tg-tnone") + (isOpen ? " tg-topen" : ""), onclick: (e) => { e.stopPropagation(); if (expandable) toggle(); } }, expandable ? "▸" : "");
+  return h("div", { class: "tg-trow" + (on ? " tg-ton" : ""), style: `padding-left:${6 + depth * 16}px`, "data-key": key, onclick: pick }, arrow, h("span", { class: "tg-tname" }, text));
+}
+
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   if (attrs) {
@@ -889,22 +895,31 @@ class GanttView {
     menu.open({ x: ev.clientX, y: ev.clientY });
   }
 
-  // open projects' unfinished tasks as parent choices, indented by depth
-  parentChoices(pid, excludeId) {
+  // open tasks of one project as a forest [{id, title, kids: [...]}] (a task's own subtree is left out when editing it)
+  parentNodes(pid, excludeId) {
     const proj = (t) => (t.projectId && this.projects[t.projectId] ? t.projectId : "");
     const banned = new Set(excludeId ? [excludeId, ...this.plugin.descendantsOf(this.reminders, excludeId).map((x) => x.id)] : []);
     const all = Object.values(this.reminders).filter((t) => t && t.id && !t.completed && !banned.has(t.id) && proj(t) === pid);
     const ids = new Set(all.map((t) => t.id)), kids = new Map();
     for (const t of all) { const k = ids.has(t.parentId) ? t.parentId : ""; if (!kids.has(k)) kids.set(k, []); kids.get(k).push(t); }
-    const out = [], seen = new Set();
-    const walk = (k, d) => {
+    const seen = new Set();
+    const build = (k) => {
+      const out = [];
       for (const t of (kids.get(k) || []).sort((x, y) => (x.sort || 0) - (y.sort || 0))) {
         if (seen.has(t.id)) continue;
-        seen.add(t.id); out.push([t.id, "　".repeat(Math.min(d, 4)) + (t.title || "(无标题)")]);
-        walk(t.id, d + 1);
+        seen.add(t.id);
+        out.push({ id: t.id, title: t.title || "(无标题)", kids: build(t.id) });
       }
+      return out;
     };
-    walk("", 0);
+    return build("");
+  }
+
+  // the same forest flattened as parent choices, indented by depth
+  parentChoices(pid, excludeId) {
+    const out = [];
+    const walk = (list, d) => { for (const n of list) { out.push([n.id, "　".repeat(Math.min(d, 4)) + n.title]); walk(n.kids, d + 1); } };
+    walk(this.parentNodes(pid, excludeId), 0);
     return out;
   }
 
@@ -923,13 +938,29 @@ class GanttView {
     const project = sel([["", "（无项目）"], ...projOpts.map((p) => [p.id, p.title])], pid);
     // parent picker: a keyword box filters the list below it; the current choice always stays listed
     const parentQ = h("input", { class: "b3-text-field fn__block", type: "text", placeholder: "搜索父任务，输入关键字过滤" });
-    const parent = h("select", { class: "b3-select fn__block tg-plist", size: "6" });
+    const parent = h("select", { class: "b3-select fn__block tg-plist", size: "6" }); // holds the value; shown as the search results, the tree below is shown while the box is empty
+    const pTree = h("div", { class: "tg-tree tg-ptree" });
+    const pOpen = new Set();
+    const openPath = (nodes, id, trail) => { for (const n of nodes) { if (n.id === id) { trail.forEach((x) => pOpen.add(x)); return true; } if (openPath(n.kids, id, [...trail, n.id])) return true; } return false; };
+    const renderPTree = () => {
+      const cur = parent.value || "", out = [treeRowEl(0, "（无，作为顶层任务）", { expandable: false, on: cur === "", pick: () => { parent.value = ""; fillParents(""); }, key: "p:" })];
+      const walk = (nodes, d) => { for (const n of nodes) {
+        const exp = n.kids.length > 0;
+        out.push(treeRowEl(d, n.title, { expandable: exp, isOpen: pOpen.has(n.id), on: cur === n.id, key: "p:" + n.id, toggle: () => { if (pOpen.has(n.id)) pOpen.delete(n.id); else pOpen.add(n.id); renderPTree(); }, pick: () => { parent.value = n.id; fillParents(n.id); } }));
+        if (exp && pOpen.has(n.id)) walk(n.kids, d + 1);
+      } };
+      walk(this.parentNodes(project.value, edit && edit.id), 0);
+      pTree.replaceChildren(...out);
+    };
     const fillParents = (cur) => {
       const keep = cur !== undefined ? cur : parent.value;
       const q = (parentQ.value || "").trim().toLowerCase();
       const opts = [["", "（无，作为顶层任务）"], ...this.parentChoices(project.value, edit && edit.id)].filter(([v, t]) => v === "" || v === keep || !q || t.toLowerCase().includes(q));
       parent.replaceChildren(...opts.map(([v, t]) => h("option", { value: v, selected: v === keep }, t)));
       parent.value = opts.some(([v]) => v === keep) ? keep : "";
+      const searching = !!q;
+      parent.style.display = searching ? "" : "none"; pTree.style.display = searching ? "none" : "";
+      renderPTree();
     };
     let pComp = false;
     parentQ.addEventListener("compositionstart", () => { pComp = true; });
@@ -952,8 +983,8 @@ class GanttView {
     const etime = h("input", { class: "b3-text-field fn__block", type: "time", value: edit ? edit.endTime || "" : "" });
     const note = h("textarea", { class: "b3-text-field fn__block", rows: "5", placeholder: "备注" });
     if (edit) note.value = edit.note || "";
-    project.addEventListener("change", () => { parentQ.value = ""; fillParents(""); });
-    const form = h("div", null, row("标题", title), row("所属项目", project), h("div", { class: "tg-frow" }, h("span", null, "父任务（可选）"), parentQ, parent),
+    project.addEventListener("change", () => { parentQ.value = ""; pOpen.clear(); fillParents(""); });
+    const form = h("div", null, row("标题", title), row("所属项目", project), h("div", { class: "tg-frow" }, h("span", null, "父任务（可选；点 ▸ 展开，点名称选中，也可搜索）"), parentQ, parent, pTree),
       h("div", { class: "tg-fgrid" }, row("开始日期", start), row("结束日期（可留空＝持续进行）", end)),
       h("div", { class: "tg-fgrid" }, row("优先级", prio), row("状态", status)),
       edit ? h("div", { class: "tg-fgrid" }, row("开始时间（可空）", stime), row("结束时间（可空）", etime)) : null,
@@ -967,6 +998,7 @@ class GanttView {
     });
     dlg.element.querySelector(".tg-form").append(form);
     dlg.element.querySelector(".b3-dialog__action").append(bCancel, h("div", { class: "fn__space" }), bOk, ...(edit ? [] : [h("div", { class: "fn__space" }), bEdit]));
+    if (preset.parentId) openPath(this.parentNodes(project.value, edit && edit.id), preset.parentId, []); // everything stays collapsed except the way down to the chosen parent
     fillParents(preset.parentId || "");
     let busy = false;
     const submit = async (thenEdit) => {
@@ -999,7 +1031,7 @@ class GanttView {
     bEdit.addEventListener("click", () => submit(true));
     title.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(false); } });
     setTimeout(() => title.focus(), 50);
-    return { ctl: { title, project, parent, parentQ, start, end, prio, status, stime, etime, note }, submit };
+    return { ctl: { title, project, parent, parentQ, pTree, start, end, prio, status, stime, etime, note }, submit };
   }
 
   newTask(preset) { return this.openCreate(preset); }
@@ -1025,10 +1057,12 @@ class GanttView {
 
     const label = (r) => `${r.tag ? "★" + r.tag + "　" : ""}${nbName.get(r.box) || ""}${r.hpath}`;
     let rows = [], picked = pins.length ? pins[0].id : "", token = 0;
-    const byId = () => new Map([...pins, ...rows].map((r) => [r.id, r]));
+    const known = new Map(); // documents met while browsing the tree: id -> {id, box, hpath}
+    const byId = () => new Map([...pins, ...rows, ...known.values()].map((r) => [r.id, r]));
     const title = h("input", { class: "b3-text-field fn__block", type: "text", value: t.title || "" });
     const q = h("input", { class: "b3-text-field fn__block", type: "text", placeholder: "搜索父文档，输入路径或标题中的关键字" });
-    const list = h("select", { class: "b3-select fn__block tg-plist", size: "8" });
+    const list = h("select", { class: "b3-select fn__block tg-plist", size: "8" }); // search results; the tree below is shown while the box is empty
+    const tree = h("div", { class: "tg-tree" });
     const nb = h("select", { class: "b3-select fn__block" }, notebooks.map((n) => h("option", { value: n.id, selected: n.id === defNb }, n.name)));
     const open = h("input", { type: "checkbox", class: "b3-switch", checked: true });
     const preview = h("div", { class: "tg-preview" });
@@ -1048,9 +1082,52 @@ class GanttView {
       const p = m.get(list.value);
       if (p) { nb.value = p.box; nb.disabled = true; } else nb.disabled = false;
       refreshPreview();
+      renderTree();
     };
+    // the whole notebook structure, collapsed at first; a click on the arrow opens a level (loaded on demand), a click on the name chooses it
+    const open_ = new Set(), kids = new Map(); // node key -> expanded / loaded children
+    const nodeKey = (box, id) => (id ? "d:" + id : "n:" + box);
+    const loadKids = async (box, path, key, hpath) => {
+      if (kids.has(key)) return;
+      kids.set(key, null); // loading
+      try {
+        const base = hpath === "/" ? "" : hpath;
+        kids.set(key, (await this.plugin.listChildDocs(box, path)).map((d) => ({ ...d, hpath: base + "/" + d.name })));
+      } catch (err) { kids.delete(key); open_.delete(key); showMessage("读取文档树失败：" + err, 4000, "error"); }
+      renderTree();
+    };
+    const treeRow = (depth, key, text, expandable, on, pick) => treeRowEl(depth, text, { expandable, isOpen: open_.has(key), on, toggle: () => toggle(key), pick, key });
+    const nodes = new Map(); // key -> {box, path, hpath} for expandable rows
+    const toggle = (key) => {
+      if (open_.has(key)) open_.delete(key); else { open_.add(key); const n = nodes.get(key); if (n) loadKids(n.box, n.path, key, n.hpath); }
+      renderTree();
+    };
+    const pickDoc = (d) => { known.set(d.id, { id: d.id, box: d.box, hpath: d.hpath }); picked = d.id; fillList(); };
+    function renderTree() {
+      nodes.clear();
+      const out = [];
+      for (const r of pins) out.push(treeRow(0, "pin:" + r.id, "★" + r.tag + "　" + (nbName.get(r.box) || "") + r.hpath, false, picked === r.id, () => { picked = r.id; fillList(); }));
+      const walk = (box, list, depth) => {
+        for (const d of list) {
+          const key = nodeKey(box, d.id);
+          if (d.hasChildren) nodes.set(key, { box, path: d.path, hpath: d.hpath });
+          out.push(treeRow(depth, key, d.name || "(无标题)", d.hasChildren, picked === d.id, () => pickDoc(d)));
+          if (d.hasChildren && open_.has(key)) { const c = kids.get(key); if (c) walk(box, c, depth + 1); else out.push(h("div", { class: "tg-tload", style: `padding-left:${6 + (depth + 1) * 16}px` }, "加载中…")); }
+        }
+      };
+      for (const n of notebooks) {
+        const key = nodeKey(n.id, "");
+        nodes.set(key, { box: n.id, path: "/", hpath: "/" });
+        out.push(treeRow(0, key, "📓 " + n.name, true, !picked && nb.value === n.id, () => { picked = ""; nb.value = n.id; fillList(); }));
+        if (open_.has(key)) { const c = kids.get(key); if (c) walk(n.id, c, 1); else out.push(h("div", { class: "tg-tload", style: "padding-left:22px" }, "加载中…")); }
+      }
+      tree.replaceChildren(...out);
+    }
+    const showMode = () => { const searching = !!String(q.value || "").trim(); list.style.display = searching ? "" : "none"; tree.style.display = searching ? "none" : ""; };
     const search = async () => {
       const my = ++token;
+      showMode();
+      if (!String(q.value || "").trim()) return;
       try {
         const found = await this.plugin.searchDocs(q.value, notebooks);
         if (my !== token) return; // a newer search superseded this one
@@ -1073,7 +1150,7 @@ class GanttView {
     title.addEventListener("input", refreshPreview);
 
     const row = (k, c) => h("div", { class: "tg-frow" }, h("span", null, k), c);
-    const form = h("div", null, row("文档标题", title), h("div", { class: "tg-frow" }, h("span", null, "父文档（可搜索；★为推荐位置）"), q, list), row("笔记本（仅在建到根目录时可选）", nb),
+    const form = h("div", null, row("文档标题", title), h("div", { class: "tg-frow" }, h("span", null, "父文档（点 ▸ 展开目录，点名称选中；也可搜索；★为推荐位置）"), q, list, tree), row("笔记本（仅在建到根目录时可选）", nb),
       h("label", { class: "tg-chk" }, open, "创建后打开文档"), preview);
     const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消");
     const bOk = h("button", { class: "b3-button b3-button--text" }, "创建并绑定");
@@ -1099,10 +1176,10 @@ class GanttView {
     bCancel.addEventListener("click", () => dlg.destroy());
     bOk.addEventListener("click", submit);
     title.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); } });
+    showMode();
     fillList();
-    search(); // recent documents until the user types
     setTimeout(() => title.focus(), 50);
-    return { ctl: { title, q, list, nb, open }, submit, get picked() { return picked; } };
+    return { ctl: { title, q, list, nb, open, tree, toggle }, submit, get picked() { return picked; } };
   }
 
   openProgress(n) {
@@ -1804,7 +1881,7 @@ class ProjectsView {
 }
 
 // the dialogs, undo toast and task actions are the chart's own; the project page borrows them instead of keeping a second copy
-for (const m of ["openCreate", "parentChoices", "openProgress", "openProgressList", "deleteTask", "toggleDone", "editTask", "say", "undo", "onKey"]) ProjectsView.prototype[m] = GanttView.prototype[m];
+for (const m of ["openCreate", "parentChoices", "parentNodes", "openProgress", "openProgressList", "deleteTask", "toggleDone", "editTask", "say", "undo", "onKey"]) ProjectsView.prototype[m] = GanttView.prototype[m];
 
 /* ---------- plugin ---------- */
 module.exports = class TaskGanttPlugin extends Plugin {
@@ -1927,6 +2004,13 @@ module.exports = class TaskGanttPlugin extends Plugin {
     const r = await fetchSyncPost("/api/notebook/lsNotebooks", "");
     if (!r || r.code !== 0) throw new Error((r && r.msg) || "读取笔记本失败");
     return ((r.data && r.data.notebooks) || []).filter((n) => !n.closed).map((n) => ({ id: n.id, name: n.name }));
+  }
+
+  // direct child documents of a notebook root (path "/") or of a document (its .sy path); [{id, box, path, name, hasChildren}]
+  async listChildDocs(box, path) {
+    const r = await fetchSyncPost("/api/filetree/listDocsByPath", { notebook: box, path: path || "/" });
+    if (!r || r.code !== 0) throw new Error((r && r.msg) || "读取文档失败");
+    return ((r.data && r.data.files) || []).map((f) => ({ id: f.id, box, path: f.path, name: String(f.name || "").replace(/\.sy$/, ""), hasChildren: (f.subFileCount || 0) > 0 }));
   }
 
   // documents whose path contains every keyword (no keyword: most recently updated); [{id, box, hpath}]

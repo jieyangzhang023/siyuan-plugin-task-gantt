@@ -160,6 +160,20 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     const ch = v.parentChoices(proj.id); ok(ch.length > 0 && ch.every(([id]) => !data[id].completed && data[id].projectId === proj.id), "parent choices: " + ch.length);
 
     // parent search
+    { // parent tree: collapsed at first, expand, pick, search swaps it for the list
+      const nodes = v.parentNodes(proj.id); const withKids = (function f(ns) { for (const n of ns) { if (n.kids.length) return n; const r = f(n.kids); if (r) return r; } return null; })(nodes);
+      const dt = v.openCreate({ projectId: proj.id }); const keys = () => dt.ctl.pTree.children.map((r) => r.attrs["data-key"]);
+      ok(keys().length === 1 + nodes.length && keys()[0] === "p:", "parent tree starts collapsed: only 无 + top-level tasks (" + keys().length + ")");
+      if (withKids) {
+        const arrowOf = (id) => dt.ctl.pTree.children.find((r) => r.attrs["data-key"] === "p:" + id);
+        const top = (function f(ns, path) { for (const n of ns) { if (n === withKids) return [...path, n]; const r = f(n.kids, [...path, n]); if (r) return r; } return null; })(nodes, []);
+        for (const n of top) { const row = arrowOf(n.id); ok(!!row, "row visible once its parent is open: " + n.title); row.children[0].listeners.click[0]({ stopPropagation() {} }); }
+        ok(keys().includes("p:" + withKids.kids[0].id), "opening a task lists its subtasks");
+        arrowOf(withKids.kids[0].id).listeners.click[0](); ok(dt.ctl.parent.value === withKids.kids[0].id, "clicking a task name picks it as parent");
+        const d5 = v.openCreate({ projectId: proj.id, parentId: withKids.kids[0].id }); ok(d5.ctl.pTree.children.some((r) => r.attrs["data-key"] === "p:" + withKids.kids[0].id), "a preset parent's ancestors are opened so it is visible");
+      }
+      dt.ctl.parentQ.value = "x"; dt.ctl.parentQ.listeners.input[0](); ok(dt.ctl.pTree.style.display === "none" && dt.ctl.parent.style.display === "", "typing a keyword shows search results instead of the tree");
+      dt.ctl.parentQ.value = ""; dt.ctl.parentQ.listeners.input[0](); ok(dt.ctl.pTree.style.display === "" && dt.ctl.parent.style.display === "none", "clearing it shows the tree again"); }
     { const dd = v.openCreate({ projectId: proj.id }); const all = dd.ctl.parent.children.length; const sample = ch[ch.length - 1]; const kw = sample[1].trim().slice(0, 3);
       dd.ctl.parentQ.value = kw; dd.ctl.parentQ.listeners.input[0](); const nf = dd.ctl.parent.children.length;
       ok(nf < all && nf >= 2 && dd.ctl.parent.children.some((o) => o.attrs.value === sample[0]), `parent search narrows ${all} -> ${nf} and keeps match`);
@@ -203,6 +217,10 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
         if (st.includes("join blocks")) return { code: 0, data: [{ bid: "PROJBLOCK", id: "20260101000001-bbbbbbb", box: "nb1", hpath: "/工作/项目B/设计" }] };
         const kws = [...st.matchAll(/hpath like '%(.*?)%'/g)].map((m) => m[1]);
         return { code: 0, data: docs.filter((x) => kws.every((k) => x.hpath.includes(k))) }; }
+      if (u === "/api/filetree/listDocsByPath") { const f = (id, name, path, n) => ({ id, name, path, subFileCount: n });
+        if (d.notebook === "nb1" && d.path === "/") return { code: 0, data: { files: [f("d1", "工作", "/d1.sy", 2), f("d9", "杂项", "/d9.sy", 0)] } };
+        if (d.notebook === "nb1" && d.path === "/d1.sy") return { code: 0, data: { files: [f("d2", "项目A", "/d1/d2.sy", 0)] } };
+        return { code: 0, data: { files: [] } }; }
       if (u === "/api/filetree/createDocWithMd") return { code: 0, data: "20260202000000-newdocx" };
       if (u === "/api/attr/setBlockAttrs") return { code: 0, data: null };
       return { code: 1, msg: "unknown " + u }; };
@@ -242,8 +260,24 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     ok(at.id === "20260202000000-newdocx" && at.attrs.bookmark === "⏰" && at.attrs["custom-bind-reminders"] === task.id && at.attrs["custom-task-projectId"] === task.projectId, "block attrs mirror host bind");
     const others = JSON.parse(n0); delete others[task.id]; const now = JSON.parse(JSON.stringify(data)); delete now[task.id]; ok(JSON.stringify(others) === JSON.stringify(now), "no other task touched");
     ok(global.__dlgDestroyed > 0, "dialog closed");
+    const t2x = () => Object.values(data).find((x) => !x.completed && !x.blockId && !x.docId && !(x.repeat && x.repeat.enabled));
+    // tree: everything collapsed at first, expand level by level, pick a nested doc
+    { const calls0 = calls.length; const dt = await v.openCreateDoc(t2x());
+      const keys = () => dt.ctl.tree.children.map((r) => r.attrs && r.attrs["data-key"]).filter(Boolean);
+      ok(keys().filter((k) => k.startsWith("n:")).join() === "n:nb1,n:nb2" && !keys().some((k) => k.startsWith("d:")), "tree starts collapsed: only notebooks (" + keys() + ")");
+      ok(!calls.slice(calls0).some(([u]) => u === "/api/filetree/listDocsByPath"), "nothing is loaded until a notebook is opened");
+      dt.ctl.toggle("n:nb1"); await new Promise((r) => setTimeout(r, 30));
+      ok(keys().includes("d:d1") && keys().includes("d:d9") && !keys().includes("d:d2"), "opening a notebook lists its top-level docs (" + keys() + ")");
+      dt.ctl.toggle("d:d1"); await new Promise((r) => setTimeout(r, 30));
+      ok(keys().includes("d:d2"), "opening a doc lists its subdocs");
+      dt.ctl.tree.children.find((r) => r.attrs["data-key"] === "d:d2").listeners.click[0]();
+      ok(dt.picked === "d2" && dt.ctl.nb.disabled === true, "clicking a name picks that doc");
+      dt.ctl.toggle("d:d1"); ok(!keys().includes("d:d2"), "collapsing hides the subdocs");
+      dt.ctl.toggle("d:d1"); dt.ctl.title.value = "树里建"; const n1 = calls.length; await dt.submit();
+      const cr3 = calls.slice(n1).find(([u]) => u === "/api/filetree/createDocWithMd");
+      ok(cr3 && cr3[1].notebook === "nb1" && cr3[1].path === "/工作/项目A/树里建", "creating under a tree pick uses its path: " + JSON.stringify(cr3 && cr3[1])); }
     // root creation
-    const t2 = Object.values(data).find((x) => !x.completed && !x.blockId && !x.docId && !(x.repeat && x.repeat.enabled)); calls.length = 0;
+    const t2 = t2x(); calls.length = 0;
     const d2 = await v.openCreateDoc(t2); await new Promise((r) => setTimeout(r, 300)); d2.ctl.list.value = ""; d2.ctl.list.listeners.change[0](); d2.ctl.nb.value = "nb2"; d2.ctl.title.value = "根文档"; await d2.submit();
     const cr2 = calls.find(([u]) => u === "/api/filetree/createDocWithMd")[1]; ok(cr2.notebook === "nb2" && cr2.path === "/根文档", "root creation: " + JSON.stringify(cr2));
     // failure leaves task unbound

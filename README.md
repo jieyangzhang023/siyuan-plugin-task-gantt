@@ -50,7 +50,7 @@ Under the toolbar: `Today N`, `Overdue N`, `Unscheduled N`. Click one to open it
 
 | Entry | How |
 |---|---|
-| Toolbar | "＋ New task": title, project, parent task (searchable), dates, priority, status. Leave the end date empty for an open-ended task |
+| Toolbar | "＋ New task": title, project, parent task (task tree, searchable), dates, priority, status. Leave the end date empty for an open-ended task |
 | Drag | Drag across a project row to open the same dialog with those dates; `Shift` + drag on a task row creates a subtask |
 | Add row | The last row of each project: type a title and press Enter (dated today), keep typing to add more |
 
@@ -64,7 +64,7 @@ Right-click → "Log progress…" each time you get a result: free text, an opti
 
 ### Create document and bind
 
-Right-click → "Create document and bind…": type a title, search for a parent document (keywords separated by spaces; ★ marks the project's document and the last parent used). The new document becomes the task's bound block. If a bound document is later deleted, the hover card says so and the menu offers "Unbind" or "Re-create and bind".
+Right-click → "Create document and bind…": type a title, pick a parent document from the notebook tree (all collapsed at first; click ▸ to open a level, click a name to choose it) or search for one (keywords separated by spaces; ★ marks the project's document and the last parent used). The new document becomes the task's bound block. If a bound document is later deleted, the hover card says so and the menu offers "Unbind" or "Re-create and bind".
 
 ## Project page
 
