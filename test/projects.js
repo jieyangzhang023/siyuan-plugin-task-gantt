@@ -128,6 +128,12 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   v.showDone = true; v.render(); ok(count(v.el, "tp-row") === 4, "show completed adds the done subtask");
   v.showDone = false; v.fold.add(t3.id); v.render(); ok(count(v.el, "tp-row") === 3, "a parent with only a done child shows as a leaf; folding is safe");
   ok(text(v.el).includes("完成了一部分") && count(v.el, "tp-ev") === 1, "timeline lists the progress record");
+  // Markdown in the timeline: plain text when Lute is missing or unusable; Lute is asked for sanitised output with line breaks kept
+  ok(count(v.el, "tp-evx") === 1 && count(v.el, "tp-md") === 0, "no Lute: result text stays plain");
+  { const calls = []; global.window.Lute = { New: () => ({ SetSanitize: (x) => calls.push(["sanitize", x]), SetSoftBreak2HardBreak: (x) => calls.push(["br", x]), SetCodeSyntaxHighlight() {}, Md2HTML: (s) => { calls.push(["md", s]); return "<p>x</p>"; } }) };
+    v.render(); ok(count(v.el, "tp-md") === 0 && text(v.el).includes("完成了一部分"), "no usable DOM: falls back to plain text, nothing lost");
+    ok(calls.some(([k, x]) => k === "sanitize" && x === true) && calls.some(([k, x]) => k === "br" && x === true), "Lute is set to sanitise and keep line breaks");
+    delete global.window.Lute; v.render(); }
   // the title / settings handlers save
   const nameInput = (() => { let r = null; const w = (x) => { if (x && x.className && /tp-name/.test(x.className)) r = x; (x && x.children || []).forEach(w); }; w(v.el); return r; })();
   nameInput.value = "项目一（改）"; await nameInput.listeners.change[0](); await new Promise((x) => setTimeout(x, 20));

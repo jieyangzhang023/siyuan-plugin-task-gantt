@@ -2,6 +2,10 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
 
+## 0.14.0
+- Results are rendered as Markdown (headings, bold / italic, lists, task lists, quotes, code blocks, tables, links) in the project page's results timeline and in the chart's "View progress log" list. SiYuan's own Lute renders it with sanitising on; single line breaks are kept, so existing plain notes look the same. Links open in the system browser. If Lute is unavailable the text is shown as plain text. The hover card is unchanged.
+- The text you wrote is shown in a bordered card, separate from the task title.
+
 ## 0.13.0
 - "Create document and bind": right-click a row in the parent-document tree (a document or a notebook) → "New subdocument". A name box (default 「新建笔记」) appears under it; press Enter to create a blank document there and have it selected as the parent, Esc to cancel. This lets you create the missing folder (A/B/C where B does not exist yet) without leaving the dialog.
 - Fix: a Gantt chart or project page left open overnight kept yesterday's date, so the "today" line was wrong and the 「今天」 button did nothing. They now reload when the date changes (at midnight, or when the window is shown again), and the 「今天」 button refreshes a stale chart first.

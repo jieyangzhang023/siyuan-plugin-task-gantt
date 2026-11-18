@@ -61,7 +61,7 @@ Edit task · Mark done / not done · Log progress · View progress log · Hide f
 
 ### Log progress
 
-Right-click → "Log progress…" each time you get a result: free text, an optional progress percentage (written to the task's `customProgress` and drawn as the bar's fill; 100% can also mark it done), an editable time for back-dating, and an option to append a line to the bound document. Records are shown as diamonds on the timeline and gathered in the project page's timeline.
+Right-click → "Log progress…" each time you get a result: free text, an optional progress percentage (written to the task's `customProgress` and drawn as the bar's fill; 100% can also mark it done), an editable time for back-dating, and an option to append a line to the bound document. Results are rendered as Markdown (lists, code blocks, tables, links…) in the project timeline and the progress log. Records are shown as diamonds on the timeline and gathered in the project page's timeline.
 
 ### Create document and bind
 

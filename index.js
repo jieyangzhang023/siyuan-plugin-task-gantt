@@ -48,6 +48,42 @@ const lsGet = (k, def) => {
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 
 // one row of a collapsible tree picker (document tree, parent-task tree)
+// Markdown for the results timeline, rendered by SiYuan's own Lute (sanitised; single newlines stay line breaks so old plain notes look the same).
+// Falls back to plain text whenever Lute or the DOM pieces are missing or anything throws.
+let luteInst = null;
+const DROP_TAGS = "script,style,iframe,object,embed,link,meta,form,base,svg,math";
+function cleanHtml(root) {
+  root.querySelectorAll(DROP_TAGS).forEach((e) => e.remove());
+  root.querySelectorAll("*").forEach((e) => {
+    for (const a of [...e.attributes]) {
+      const n = a.name.toLowerCase(), v = String(a.value).trim().toLowerCase();
+      if (n.startsWith("on") || n === "style" || ((n === "href" || n === "src" || n === "xlink:href" || n === "srcset") && !/^(https?:|mailto:|#|assets\/)/.test(v))) e.removeAttribute(a.name);
+    }
+    if (e.tagName === "INPUT") { e.setAttribute("disabled", ""); }
+  });
+}
+function mdBox(text, cls) {
+  const box = h("div", { class: cls }, text);
+  try {
+    const L = typeof window !== "undefined" && window.Lute;
+    if (!L || !L.New) return box;
+    if (!luteInst) { luteInst = L.New(); luteInst.SetSanitize(true); luteInst.SetSoftBreak2HardBreak(true); luteInst.SetCodeSyntaxHighlight(false); }
+    const tpl = document.createElement("template");
+    tpl.innerHTML = luteInst.Md2HTML(String(text));
+    cleanHtml(tpl.content);
+    box.className = cls + " tp-md";
+    box.replaceChildren(tpl.content);
+    box.addEventListener("click", (ev) => { // links open outside, never inside the SiYuan window
+      const a = ev.target && ev.target.closest ? ev.target.closest("a") : null;
+      if (!a) return;
+      ev.preventDefault(); ev.stopPropagation();
+      const href = a.getAttribute("href") || "";
+      if (/^(https?:|mailto:)/i.test(href)) window.open(href, "_blank");
+    });
+  } catch (e) { console.warn("[task-gantt] markdown render failed", e); }
+  return box;
+}
+
 function treeRowEl(depth, text, { expandable, isOpen, on, toggle, pick, key, menu }) {
   const arrow = h("span", { class: "tg-tarrow" + (expandable ? "" : " tg-tnone") + (isOpen ? " tg-topen" : ""), onclick: (e) => { e.stopPropagation(); if (expandable) toggle(); } }, expandable ? "▸" : "");
   return h("div", { class: "tg-trow" + (on ? " tg-ton" : ""), style: `padding-left:${6 + depth * 16}px`, "data-key": key, onclick: pick, oncontextmenu: menu }, arrow, h("span", { class: "tg-tname" }, text));
@@ -1301,7 +1337,7 @@ class GanttView {
       const list = this.plugin.progressOf(t.id).slice().reverse();
       if (!list.length) { body.replaceChildren(h("div", { class: "tg-empty" }, "还没有记录")); return; }
       body.replaceChildren(...list.map((e) => {
-        const txt = h("div", { class: "tg-logtext" }, e.text);
+        const txt = mdBox(e.text, "tg-logtext");
         const edit = h("button", { class: "b3-button b3-button--outline" }, "编辑");
         const del = h("button", { class: "b3-button b3-button--outline" }, "删除");
         edit.addEventListener("click", () => {
@@ -1865,7 +1901,7 @@ class ProjectsView {
       h("div", { class: "tp-tl" }, groups.length ? groups.map((g) => h("div", { class: "tp-day" }, h("div", { class: "tp-dayh" }, head(g.d)),
         g.list.map((e) => h("div", { class: "tp-ev" }, h("span", { class: "tp-evt" }, e.time.slice(11)),
           h("div", { class: "tp-evb" }, h("div", null, h("span", { class: "tp-evk", title: "查看这个任务的全部记录", onclick: () => { const t = this.reminders[e.taskId]; if (t) this.openProgressList(this.nodeFor(t)); } }, e.taskTitle), e.progress != null ? this.pill(e.progress + "%", "tp-b-today") : null),
-            h("div", { class: "tp-evx" }, e.text)))))) : h("div", { class: "tp-dim tp-none" }, "还没有成果记录。在任务上点「记录」，这里会按时间汇总，写周报时一目了然。")));
+            mdBox(e.text, "tp-evx")))))) : h("div", { class: "tp-dim tp-none" }, "还没有成果记录。在任务上点「记录」，这里会按时间汇总，写周报时一目了然。")));
   }
 
   /* ----- dialogs ----- */
