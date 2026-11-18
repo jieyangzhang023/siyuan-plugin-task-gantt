@@ -48,9 +48,9 @@ const lsGet = (k, def) => {
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 
 // one row of a collapsible tree picker (document tree, parent-task tree)
-function treeRowEl(depth, text, { expandable, isOpen, on, toggle, pick, key }) {
+function treeRowEl(depth, text, { expandable, isOpen, on, toggle, pick, key, menu }) {
   const arrow = h("span", { class: "tg-tarrow" + (expandable ? "" : " tg-tnone") + (isOpen ? " tg-topen" : ""), onclick: (e) => { e.stopPropagation(); if (expandable) toggle(); } }, expandable ? "▸" : "");
-  return h("div", { class: "tg-trow" + (on ? " tg-ton" : ""), style: `padding-left:${6 + depth * 16}px`, "data-key": key, onclick: pick }, arrow, h("span", { class: "tg-tname" }, text));
+  return h("div", { class: "tg-trow" + (on ? " tg-ton" : ""), style: `padding-left:${6 + depth * 16}px`, "data-key": key, onclick: pick, oncontextmenu: menu }, arrow, h("span", { class: "tg-tname" }, text));
 }
 
 function h(tag, attrs, ...kids) {
@@ -70,6 +70,19 @@ function h(tag, attrs, ...kids) {
     el.append(c.nodeType ? c : document.createTextNode(String(c)));
   }
   return el;
+}
+
+// A view left open overnight keeps yesterday's model: reload it once the date changes (at midnight, or when the window is shown again).
+// Returns the function that removes the listeners.
+function watchDay(view) {
+  let timer = 0;
+  const check = () => { if (view.model && view.model.today !== todayNum() && view.el.isConnected && !view.dragging) view.reload(); };
+  const arm = () => { clearTimeout(timer); const n = new Date(); timer = setTimeout(() => { check(); arm(); }, new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1, 0, 0, 2) - n); if (timer && timer.unref) timer.unref(); };
+  const onVis = () => { if (!document.hidden) check(); };
+  window.addEventListener("focus", check);
+  if (document.addEventListener) document.addEventListener("visibilitychange", onVis);
+  arm();
+  return () => { clearTimeout(timer); window.removeEventListener("focus", check); if (document.removeEventListener) document.removeEventListener("visibilitychange", onVis); };
 }
 
 /* ---------- model ---------- */
@@ -274,6 +287,7 @@ class GanttView {
     this._onData = () => { clearTimeout(this._t); this._t = setTimeout(() => { if (!this.dragging) this.reload(); }, 250); };
     window.addEventListener("reminderUpdated", this._onData);
     window.addEventListener("projectUpdated", this._onData);
+    this._unwatchDay = watchDay(this);
     (plugin.ganttViews || (plugin.ganttViews = new Set())).add(this); // the project page switches the chart's project through this, not through window events
     this.el.classList.add("tg");
     this.reload();
@@ -283,6 +297,7 @@ class GanttView {
     window.removeEventListener("reminderUpdated", this._onData);
     window.removeEventListener("projectUpdated", this._onData);
     if (this.plugin.ganttViews) this.plugin.ganttViews.delete(this);
+    this._unwatchDay();
     window.removeEventListener("keydown", this._onKey);
     window.removeEventListener("pointerdown", this._onDown, true);
     clearTimeout(this._t); clearTimeout(this._tt); clearTimeout(this._qt);
@@ -490,7 +505,7 @@ class GanttView {
     const zoomBtns = h("div", { class: "tg-seg" }, Object.keys(ZOOMS).map((z) =>
       h("button", { class: "b3-button b3-button--outline" + (z === this.zoom ? " tg-on" : ""), onclick: () => { this.zoom = z; lsSet("tg-zoom", z); this.render(); } }, { day: "日", week: "周", month: "月" }[z])));
     const und = h("label", { class: "tg-chk" }, h("input", { type: "checkbox", class: "b3-switch", checked: this.showUndated, onchange: (e) => { this.showUndated = e.target.checked; lsSet("tg-undated", this.showUndated ? "1" : "0"); this.render(); } }), "显示未排期");
-    const today = h("button", { class: "b3-button b3-button--outline", onclick: () => { this.scroller.scrollLeft = Math.max(0, (this.model.today - this.rs) * this.px - 120); } }, "今天");
+    const today = h("button", { class: "b3-button b3-button--outline", onclick: async () => { if (this.model.today !== todayNum()) await this.reload(); this.scroller.scrollLeft = Math.max(0, (this.model.today - this.rs) * this.px - 120); } }, "今天");
     const statusSel = sel(STATUS_OPTIONS, this.status, (v) => { this.status = v; this.render(); });
     let comp = false; // do not re-render while a Chinese IME composition is in progress
     const applyQ = () => { this.q = search.value; clearTimeout(this._qt); this._qt = setTimeout(() => { this._refocus = true; this.render(); }, 200); };
@@ -1075,7 +1090,7 @@ class GanttView {
     const safeTitle = () => title.value.replace(/[\/\\]/g, "-").trim();
     const refreshPreview = () => {
       const p = byId().get(picked);
-      const base = p ? (nbName.get(p.box) || "") + (p.hpath === "/" ? "" : p.hpath) : (nbName.get(nb.value) || "");
+      const base = (p ? (nbName.get(p.box) || "") + (p.hpath === "/" ? "" : p.hpath) : (nbName.get(nb.value) || ""));
       preview.textContent = "将创建：" + base + "/" + (safeTitle() || "…");
     };
     const fillList = () => {
@@ -1102,7 +1117,43 @@ class GanttView {
       } catch (err) { kids.delete(key); open_.delete(key); showMessage("读取文档树失败：" + err, 4000, "error"); }
       renderTree();
     };
-    const treeRow = (depth, key, text, expandable, on, pick) => treeRowEl(depth, text, { expandable, isOpen: open_.has(key), on, toggle: () => toggle(key), pick, key });
+    const treeRow = (depth, key, text, expandable, on, pick, menu) => treeRowEl(depth, text, { expandable, isOpen: open_.has(key), on, toggle: () => toggle(key), pick, key, menu });
+    // right-click a row -> "新增子文档": an inline name box (default 新建笔记) appears under it; Enter creates a blank document there and selects it
+    let adding = null; // {key, box, path, hpath, depth}
+    const addInput = h("input", { class: "b3-text-field fn__block", type: "text", value: "新建笔记" });
+    const rowMenu = (target) => (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const menu = new Menu("task-gantt-tree");
+      menu.addItem({ icon: "iconAdd", label: "新增子文档", click: () => addUnder(target) });
+      menu.open({ x: ev.clientX, y: ev.clientY });
+    };
+    function addUnder(target) {
+      adding = target; addInput.value = "新建笔记";
+      open_.add(target.key); loadKids(target.box, target.path, target.key, target.hpath); // show the existing children while naming
+      renderTree();
+    }
+    const addRow = () => h("div", { class: "tg-trow tg-tadd", style: `padding-left:${6 + (adding.depth + 1) * 16}px` }, addInput, h("span", { class: "tg-tload" }, "回车创建，Esc 取消"));
+    const commitAdd = async () => {
+      const a = adding, name = addInput.value.replace(/[\/\\]/g, "-").trim();
+      if (!a || !name || addInput.disabled) return;
+      addInput.disabled = true;
+      try {
+        const id = await this.plugin.createChildDoc(a.box, a.hpath, name);
+        adding = null; kids.delete(a.key); open_.add(a.key);
+        if (a.doc) a.doc.hasChildren = true;
+        await loadKids(a.box, a.path, a.key, a.hpath);
+        const made = (kids.get(a.key) || []).find((d) => d.id === id);
+        pickDoc(made || { id, box: a.box, hpath: (a.hpath === "/" ? "" : a.hpath) + "/" + name });
+      } catch (err) { showMessage("新增文档失败：" + err, 5000, "error"); }
+      addInput.disabled = false;
+      renderTree();
+    };
+    addInput.addEventListener("keydown", (e) => {
+      e.stopPropagation(); // Esc must not close the dialog
+      if (e.isComposing) return;
+      if (e.key === "Enter") { e.preventDefault(); commitAdd(); }
+      else if (e.key === "Escape") { e.preventDefault(); adding = null; renderTree(); }
+    });
     const nodes = new Map(); // key -> {box, path, hpath} for expandable rows
     const toggle = (key) => {
       if (open_.has(key)) open_.delete(key); else { open_.add(key); const n = nodes.get(key); if (n) loadKids(n.box, n.path, key, n.hpath); }
@@ -1117,17 +1168,20 @@ class GanttView {
         for (const d of list) {
           const key = nodeKey(box, d.id);
           if (d.hasChildren) nodes.set(key, { box, path: d.path, hpath: d.hpath });
-          out.push(treeRow(depth, key, d.name || "(无标题)", d.hasChildren, picked === d.id, () => pickDoc(d)));
+          out.push(treeRow(depth, key, d.name || "(无标题)", d.hasChildren, picked === d.id, () => pickDoc(d), rowMenu({ key, box, path: d.path, hpath: d.hpath, depth, doc: d })));
+          if (adding && adding.key === key) out.push(addRow());
           if (d.hasChildren && open_.has(key)) { const c = kids.get(key); if (c) walk(box, c, depth + 1); else out.push(h("div", { class: "tg-tload", style: `padding-left:${6 + (depth + 1) * 16}px` }, "加载中…")); }
         }
       };
       for (const n of notebooks) {
         const key = nodeKey(n.id, "");
         nodes.set(key, { box: n.id, path: "/", hpath: "/" });
-        out.push(treeRow(0, key, "📓 " + n.name, true, !picked && nb.value === n.id, () => { picked = ""; nb.value = n.id; fillList(); }));
+        out.push(treeRow(0, key, "📓 " + n.name, true, !picked && nb.value === n.id, () => { picked = ""; nb.value = n.id; fillList(); }, rowMenu({ key, box: n.id, path: "/", hpath: "/", depth: 0 })));
+        if (adding && adding.key === key) out.push(addRow());
         if (open_.has(key)) { const c = kids.get(key); if (c) walk(n.id, c, 1); else out.push(h("div", { class: "tg-tload", style: "padding-left:22px" }, "加载中…")); }
       }
       tree.replaceChildren(...out);
+      if (adding && !addInput.disabled && addInput.focus) { addInput.focus(); if (addInput.select) addInput.select(); }
     }
     const showMode = () => { const searching = !!String(q.value || "").trim(); list.style.display = searching ? "" : "none"; tree.style.display = searching ? "none" : ""; };
     const search = async () => {
@@ -1156,7 +1210,7 @@ class GanttView {
     title.addEventListener("input", refreshPreview);
 
     const row = (k, c) => h("div", { class: "tg-frow" }, h("span", null, k), c);
-    const form = h("div", null, row("文档标题", title), h("div", { class: "tg-frow" }, h("span", null, "父文档（点 ▸ 展开目录，点名称选中；也可搜索；★为推荐位置）"), q, list, tree), row("笔记本（仅在建到根目录时可选）", nb),
+    const form = h("div", null, row("文档标题", title), h("div", { class: "tg-frow" }, h("span", null, "父文档（点 ▸ 展开目录，点名称选中；右键可新增子文档；也可搜索；★为推荐位置）"), q, list, tree), row("笔记本（仅在建到根目录时可选）", nb),
       h("label", { class: "tg-chk" }, open, "创建后打开文档"), preview);
     const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消");
     const bOk = h("button", { class: "b3-button b3-button--text" }, "创建并绑定");
@@ -1185,7 +1239,7 @@ class GanttView {
     showMode();
     fillList();
     setTimeout(() => title.focus(), 50);
-    return { ctl: { title, q, list, nb, open, tree, toggle }, submit, get picked() { return picked; } };
+    return { ctl: { title, q, list, nb, open, tree, toggle, addInput }, submit, get picked() { return picked; } };
   }
 
   openProgress(n) {
@@ -1533,6 +1587,7 @@ class ProjectsView {
     this._onData = () => { clearTimeout(this._t); this._t = setTimeout(() => this.reload(), 250); };
     window.addEventListener("reminderUpdated", this._onData);
     window.addEventListener("projectUpdated", this._onData);
+    this._unwatchDay = watchDay(this);
     this.el.classList.add("tp");
     this.reload();
   }
@@ -1542,6 +1597,7 @@ class ProjectsView {
     window.removeEventListener("projectUpdated", this._onData);
     window.removeEventListener("keydown", this._onKey);
     window.removeEventListener("pointerdown", this._onDown, true);
+    this._unwatchDay();
     clearTimeout(this._t); clearTimeout(this._tt);
   }
 
@@ -2035,6 +2091,15 @@ module.exports = class TaskGanttPlugin extends Plugin {
     const list = ids.map((x) => `'${esc(x)}'`).join(",");
     const rows = await this.sql(`select b.id as bid, d.id as id, d.box as box, d.hpath as hpath from blocks b join blocks d on d.id = b.root_id where b.id in (${list}) and d.box in (${boxes})`);
     return rows.map((r) => ({ id: r.id, box: r.box, hpath: r.hpath, rootOf: r.bid }));
+  }
+
+  // a blank document under a parent (hpath "/" = notebook root); returns its id
+  async createChildDoc(box, parentHPath, title) {
+    if (!box || !title) throw new Error("缺少标题或笔记本");
+    const base = !parentHPath || parentHPath === "/" ? "" : String(parentHPath).replace(/\/+$/, "");
+    const r = await fetchSyncPost("/api/filetree/createDocWithMd", { notebook: box, path: base + "/" + title, markdown: "" });
+    if (!r || r.code !== 0 || !r.data) throw new Error((r && r.msg) || "创建文档失败");
+    return r.data;
   }
 
   // Create a document and make it the task's bound block, the way the host's own bind does:

@@ -2,6 +2,10 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
 
+## 0.13.0
+- "Create document and bind": right-click a row in the parent-document tree (a document or a notebook) → "New subdocument". A name box (default 「新建笔记」) appears under it; press Enter to create a blank document there and have it selected as the parent, Esc to cancel. This lets you create the missing folder (A/B/C where B does not exist yet) without leaving the dialog.
+- Fix: a Gantt chart or project page left open overnight kept yesterday's date, so the "today" line was wrong and the 「今天」 button did nothing. They now reload when the date changes (at midnight, or when the window is shown again), and the 「今天」 button refreshes a stale chart first.
+
 ## 0.12.0
 - Tasks that have not started yet (open, first day still ahead) are drawn in purple, with a legend entry and a 「未开始」 note on the hover card. Parent summary bars follow the same rule.
 

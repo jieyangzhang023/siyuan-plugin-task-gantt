@@ -256,3 +256,7 @@
 
 .tp-del { color: #e5484d; }
 .tp-del:hover { background: color-mix(in srgb, #e5484d 12%, transparent); }
+
+.tg-tree .tg-tadd { display: flex; align-items: center; gap: 8px; cursor: default; }
+.tg-tree .tg-tadd input { flex: 1; min-width: 0; }
+.tg-tree .tg-tadd .tg-tload { white-space: nowrap; }

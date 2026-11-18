@@ -1,7 +1,7 @@
 const Module = require("module"), fs = require("fs"); const orig = Module._load;
 const menus = [];
 Module._load = function (r, ...a) { if (r === "siyuan") return { Plugin: class { constructor(){ this.store={}; } async loadData(n){return this.store[n];} async saveData(n,v){this.store[n]=v;} addIcons(){} addTab(){} addTopBar(){} addCommand(){} }, openTab() {}, showMessage(m){ (global.__msgs ||= []).push(m); }, fetchSyncPost: async (u, d) => global.__kernel(u, d), Dialog: class { constructor(o){ this.o=o; const f=global.El("div"), a=global.El("div"); this.element={ querySelector:(q)=>q===".tg-form"?f:a, f, a }; global.__dlg=this; } destroy(){ global.__dlgDestroyed=(global.__dlgDestroyed||0)+1; } }, confirm(){},
-  Menu: class { constructor(){ this.items=[]; menus.push(this);} addItem(i){this.items.push(i.label);} addSeparator(){} open(){} } }; return orig.call(this, r, ...a); };
+  Menu: class { constructor(){ this.items=[]; menus.push(this);} addItem(i){this.items.push(i.label); (this.fns||(this.fns={}))[i.label]=i.click;} addSeparator(){} open(){} } }; return orig.call(this, r, ...a); };
 let nullAppend = 0;
 function El(tag) { const cls = new Set(); const e = { nodeType: 1, tag, children: [], style: {}, listeners: {}, scrollLeft: 0, scrollTop: 0, isConnected: true,
   classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
@@ -280,6 +280,30 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     const t2 = t2x(); calls.length = 0;
     const d2 = await v.openCreateDoc(t2); await new Promise((r) => setTimeout(r, 300)); d2.ctl.list.value = ""; d2.ctl.list.listeners.change[0](); d2.ctl.nb.value = "nb2"; d2.ctl.title.value = "根文档"; await d2.submit();
     const cr2 = calls.find(([u]) => u === "/api/filetree/createDocWithMd")[1]; ok(cr2.notebook === "nb2" && cr2.path === "/根文档", "root creation: " + JSON.stringify(cr2));
+    // right-click a tree row -> 新增子文档: inline name box (default 新建笔记), Enter creates a blank doc and selects it
+    { const t4 = t2x(); calls.length = 0;
+      const d4 = await v.openCreateDoc(t4); await new Promise((r) => setTimeout(r, 100));
+      const rowOf = (k) => d4.ctl.tree.children.find((r) => r.attrs && r.attrs["data-key"] === k);
+      d4.ctl.toggle("n:nb1"); await new Promise((r) => setTimeout(r, 30));
+      const rA = rowOf("d:d1"); ok(rA && rA.listeners.contextmenu, "tree rows have a context menu");
+      rA.listeners.contextmenu[0]({ preventDefault() {}, stopPropagation() {}, clientX: 1, clientY: 1 });
+      ok(menus.at(-1).items.includes("新增子文档"), "menu offers 新增子文档");
+      menus.at(-1).fns["新增子文档"](); await new Promise((r) => setTimeout(r, 30));
+      ok(d4.ctl.addInput.value === "新建笔记" && d4.ctl.tree.children.some((r) => r.attrs && /tg-tadd/.test(r.attrs.class || r.className || "")) || d4.ctl.tree.children.some((r) => (r.className || "").includes("tg-tadd")), "inline name box appears with the default name");
+      d4.ctl.addInput.value = "B/新目录"; await d4.ctl.addInput.listeners.keydown[0]({ key: "Enter", isComposing: false, preventDefault() {}, stopPropagation() {} }); await new Promise((r) => setTimeout(r, 60));
+      const c4 = calls.find(([u]) => u === "/api/filetree/createDocWithMd")[1];
+      ok(c4.notebook === "nb1" && c4.path === "/工作/B-新目录" && c4.markdown === "", "blank doc created under the right-clicked doc: " + JSON.stringify(c4));
+      ok(!d4.ctl.tree.children.some((r) => (r.className || "").includes("tg-tadd")), "name box closes after creating");
+      d4.ctl.title.value = "叶子"; await d4.submit();
+      const c5 = calls.filter(([u]) => u === "/api/filetree/createDocWithMd").at(-1)[1];
+      ok(/^\/工作\/B-新目录\/叶子$/.test(c5.path), "the new doc is selected as the parent: " + c5.path); }
+    // left open overnight: a stale model is rebuilt when the window gets focus, and by the Today button
+    { const real = () => Math.round(Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) / 864e5);
+      v.model.today = real() - 1; (winL.focus || []).forEach((f) => f()); await new Promise((r) => setTimeout(r, 60));
+      ok(v.model.today === real(), "window focus after midnight rebuilds the model: " + v.model.today);
+      v.model.today = real() - 1; const tb = JSON.stringify(v.el).length; // eslint-disable-line no-unused-vars
+      const tdBtn = (function find(e) { if (!e || !e.children) return null; if (e.tag === "button" && JSON.stringify(e.children) .includes("今天") && e.listeners.click) return e; for (const c of e.children) { const r = find(c); if (r) return r; } return null; })(v.el);
+      ok(!!tdBtn, "Today button found"); await tdBtn.listeners.click[0](); ok(v.model.today === real(), "Today button reloads a stale model: " + v.model.today); }
     // failure leaves task unbound
     global.__kernel = async (u) => (u === "/api/filetree/createDocWithMd" ? { code: -1, msg: "boom" } : { code: 0, data: { notebooks: [{ id: "nb1", name: "x" }] } });
     const t3 = Object.values(data).find((x) => !x.completed && !x.blockId && !x.docId && !(x.repeat && x.repeat.enabled)); let threw = false;

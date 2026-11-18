@@ -65,7 +65,7 @@ Right-click → "Log progress…" each time you get a result: free text, an opti
 
 ### Create document and bind
 
-Right-click → "Create document and bind…": type a title, pick a parent document from the notebook tree (all collapsed at first; click ▸ to open a level, click a name to choose it) or search for one (keywords separated by spaces; ★ marks the project's document and the last parent used). The new document becomes the task's bound block. If a bound document is later deleted, the hover card says so and the menu offers "Unbind" or "Re-create and bind".
+Right-click → "Create document and bind…": type a title, pick a parent document from the notebook tree (all collapsed at first; click ▸ to open a level, click a name to choose it; right-click a row → "New subdocument" to create a missing level, name it and press Enter) or search for one (keywords separated by spaces; ★ marks the project's document and the last parent used). The new document becomes the task's bound block. If a bound document is later deleted, the hover card says so and the menu offers "Unbind" or "Re-create and bind".
 
 ## Project page
 
