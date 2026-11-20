@@ -105,6 +105,16 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   v.groupMenu({ clientX: 100, clientY: 5, preventDefault() {}, target: { closest: (s) => (s === ".tg-line" ? fakeLine : null) } }, v.model.groups[0]); ok(menus.at(-1).items[0].includes("新建任务"), "group menu");
 
 
+  // ---- a parent whose subtasks are all done is only done once it is marked done itself
+  { const T = (id, o) => Object.assign({ id, title: id, completed: false, createdAt: "x", projectId: "" }, o);
+    v.reminders = { PP: T("PP", { date: "2026-09-01", endDate: "2026-09-05", kanbanStatus: "doing" }), K1: T("K1", { parentId: "PP", date: "2026-09-01", endDate: "2026-09-02", completed: true, completedTime: "2026-09-02 10:00" }),
+      K2: T("K2", { parentId: "PP", date: "2026-09-03", endDate: "2026-09-04", completed: true, completedTime: "2026-09-04 10:00" }),
+      QQ: T("QQ", { date: "2026-09-01", endDate: "2026-09-05", kanbanStatus: "doing", completed: true, completedTime: "2026-09-05 10:00" }), L1: T("L1", { parentId: "QQ", date: "2026-09-01", endDate: "2026-09-02", completed: true, completedTime: "2026-09-02 10:00" }) };
+    v.projects = {}; v.done = "all"; v.status = "all"; v.q = ""; v.sort = "project"; v.showUndated = true; v.render();
+    const nd = {}; const w2 = (n) => { nd[n.id] = n; n.children.forEach(w2); }; v.model.groups.forEach((g) => g.roots.forEach(w2));
+    ok(nd.PP.doneLeaves === nd.PP.leaves && v.stateOf(nd.PP) === "late", "all subtasks done but the parent is not: stays open, overdue shows: " + v.stateOf(nd.PP));
+    ok(v.stateOf(nd.QQ) === "done", "a parent marked done is done"); }
+
   // ---- open-ended tasks
   { const T = (id, o) => Object.assign({ id, title: id, completed: false, createdAt: "x", projectId: "" }, o);
     v.reminders = { A: T("A", { date: "2026-09-01", kanbanStatus: "doing" }), B: T("B", { date: "2026-09-01", kanbanStatus: "short_term" }),

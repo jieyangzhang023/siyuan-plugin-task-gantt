@@ -2,6 +2,12 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
 
+## 0.16.0
+- A parent task is now drawn green only when it is marked done itself. With all subtasks done but the parent still open it stays blue, with the red overdue tail if its dates have passed, so it is not forgotten.
+- Marking a task done asks when it was actually finished (default now, can be set to the past, not the future); subtasks completed with it get the same time. The results timeline orders the "✓ 完成" entry by that time.
+- Results timeline: a range drop-down — latest 20 / 60 / 100 / 200 entries, last 3 days / week / two weeks / month, or a custom start and end date (inclusive, either may be left empty). The choice is remembered.
+- Results timeline performance: entries are built 100 at a time ("显示更多" appends the next batch in place), and rendered Markdown is cached so repainting the page no longer re-runs it.
+
 ## 0.15.0
 - The project page's results timeline now also lists task completions ("✓ 完成" with the completion time), mixed with progress records by time. A subtask completed together with its parent is not listed separately, and a completion is skipped when a 100% progress record already exists for that day.
 

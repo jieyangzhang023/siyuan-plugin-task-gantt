@@ -278,3 +278,5 @@
 .tp-md a { color: var(--b3-theme-primary); text-decoration: underline; cursor: pointer; word-break: break-all; }
 .tp-md img { max-width: 100%; }
 .tp-md hr { border: none; border-top: 1px solid var(--b3-border-color); margin: 6px 0; }
+.tp-more { text-align: center; padding: 8px 0 2px; }
+.tp-span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }

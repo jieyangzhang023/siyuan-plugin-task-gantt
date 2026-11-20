@@ -88,6 +88,9 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     ok(projectTimeline(RR, LL, "P", 0, k2).length === 2, "completions are not listed unless asked for");
     const w = projectTimeline(RR, LL, "P", 0, k2, true);
     ok(w.map((e) => e.taskId + (e.done ? "✓" : "")).join() === "H1,S1✓,S1,P1✓", "completions: parent and standalone listed, cascaded child / no-time / 100%-record day / other project / open task skipped: " + w.map((e) => e.taskId + (e.done ? "✓" : "")).join());
+    ok(projectTimeline(RR, LL, "P", 0, k2, true, "2026-11-18").length === 4 && projectTimeline(RR, LL, "P", 0, k2, true, "2026-11-19").length === 0, "timeline can be limited to recent days (inclusive of the first day)");
+    ok(projectTimeline(RR, LL, "P", 0, k2, true, "2026-11-18", "2026-11-18").length === 4 && projectTimeline(RR, LL, "P", 0, k2, true, "", "2026-11-17").length === 0 && projectTimeline(RR, LL, "P", 0, k2, true, "", "2026-11-18").length === 4, "timeline can be limited to a date range (both ends inclusive, either may be open)");
+    ok(projectTimeline(RR, LL, "P", 2, k2, true, "2026-11-18").length === 2, "the count limit still applies with a day range");
     ok(w[1].done === true && w[1].time === "2026-11-18 11:00" && w[2].taskId === "S1" && !w[2].done, "newest first, completions mixed with progress records"); }
   ok(projectTimeline(R, LOG, "", 0, known).length === 1 && projectTimeline(R, LOG, "", 0, known)[0].text === "无项目", "timeline of unclassified");
 
@@ -156,7 +159,37 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   global.__dlg = null; v.editTask(P2.store["tasks.json"][t1.id]); ok(!!global.__dlg && /编辑任务/.test(global.__dlg.o.title), "clicking a title opens the shared edit dialog");
   global.__dlg = null; v.openProgress(v.nodeFor(P2.store["tasks.json"][t1.id])); ok(!!global.__dlg, "记录 opens the progress dialog");
   // complete from the page
-  await v.toggleDone(P2.store["tasks.json"][t1.id]); ok(P2.store["tasks.json"][t1.id].completed === true, "checkbox completes a task");
+  { const orig = v.askDoneTime; let got = null; v.askDoneTime = function (...a) { got = orig.apply(this, a); return got; };
+    const cur = () => P2.store["tasks.json"][t1.id];
+    await v.toggleDone(cur());
+    ok(!!got && /^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(got.ctl.when.value), "completing asks for the finish time, default now: " + (got && got.ctl.when.value));
+    ok(cur().completed !== true, "nothing is completed until the dialog is confirmed");
+    got.ctl.when.value = "2099-01-01T10:00"; await got.submit(); ok(cur().completed !== true, "a finish time in the future is refused");
+    got.ctl.when.value = ""; await got.submit(); ok(cur().completed !== true, "an empty time is refused");
+    got.ctl.when.value = "2026-11-10T16:45"; await got.submit();
+    ok(cur().completed === true && cur().completedTime === "2026-11-10 16:45", "checkbox completes a task at the chosen time: " + cur().completedTime);
+    v.askDoneTime = orig;
+    // timeline range: count or days
+    const evs = () => count(v.el, "tp-ev");
+    await v.reload(); v.tlRange = "n60"; v.render(); const all = evs();
+    v.tlRange = "n20"; v.render(); ok(evs() === all && all >= 3, "latest-N range lists everything when there are fewer entries: " + evs());
+    v.tlRange = "d3"; v.render(); ok(evs() > 0 && evs() < all, "last-3-days range drops older entries: " + evs() + " of " + all);
+    v.tlRange = "d30"; v.render(); ok(evs() === all, "last-month range keeps them again");
+    // big timelines are built in batches; "显示更多" appends the next batch in place
+    { const arr = P2.log[t1.id] || (P2.log[t1.id] = []), mark = arr.length;
+      for (let i = 0; i < 130; i++) arr.push({ id: "z" + i, time: `2026-10-${String(1 + (i % 28)).padStart(2, "0")} ${String(8 + (i % 10)).padStart(2, "0")}:00`, text: "批量记录 " + i });
+      await v.reload(); v.tlRange = "n200"; v.render();
+      const findBtn = (e) => { if (!e || !e.children) return null; if (e.tag === "button" && JSON.stringify(e.children).includes("显示更多") && e.listeners.click) return e; for (const c of e.children) { const r = findBtn(c); if (r) return r; } return null; };
+      const total = all + 130;
+      ok(evs() === 100 && !!findBtn(v.el) && JSON.stringify(findBtn(v.el).children).includes("还有 " + (total - 100) + " 条"), "only the first 100 entries are built: " + evs());
+      findBtn(v.el).listeners.click[0](); ok(evs() === total && !findBtn(v.el), "显示更多 appends the rest in place and the button goes away: " + evs() + "/" + total);
+      arr.length = mark; await v.reload(); }
+    // custom date range
+    v.tlRange = "custom"; v.tlFrom = "2026-11-10"; v.tlTo = "2026-11-10"; v.render(); ok(evs() === 1, "custom range: one day only: " + evs());
+    v.tlFrom = ""; v.tlTo = "2026-11-09"; v.render(); ok(evs() === 0 && /没有成果记录/.test(text(v.el)), "custom range: open start, nothing before the 9th");
+    v.tlFrom = "2026-11-10"; v.tlTo = ""; v.render(); ok(evs() === all - 0 || evs() >= 2, "custom range: open end keeps everything from the start day: " + evs());
+    v.tlFrom = "2026-11-12"; v.tlTo = "2026-11-09"; v.render(); ok(evs() === 0 && /开始日期晚于结束日期/.test(text(v.el)), "custom range: start after end is reported");
+    v.tlFrom = ""; v.tlTo = ""; v.tlRange = "n60"; v.render(); }
   // gantt link
   const gvv = new GanttView(El("div"), P2); await gvv.reload(); gvv.project = "other"; v.viewInGantt(p1); await new Promise((x) => setTimeout(x, 120));
   ok(gvv.project === p1, "「在甘特图中查看」 switches an open chart to the project");

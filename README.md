@@ -26,7 +26,7 @@ A Gantt chart and project pages for your tasks inside SiYuan: group tasks by pro
 | Bar ending with ▸ | "In progress" task with no end date: drawn from its start to today and never counted as overdue |
 | Grey | Abandoned |
 | Dashed bar | Only an "available from" or a deadline date; read-only |
-| Parent bar | Summary of its subtasks; read-only |
+| Parent bar | Summary of its subtasks; read-only. It turns green only when the parent itself is marked done — with all subtasks done but the parent still open, it stays blue (red tail if overdue) so you remember to close it |
 | Orange diamond | A result was logged on that day |
 
 Hover a bar or a title for a card with project, dates, status, progress and the latest results.
@@ -57,7 +57,7 @@ Under the toolbar: `Today N`, `Overdue N`, `Unscheduled N`. Click one to open it
 
 ## Right-click menu
 
-Edit task · Mark done / not done · Log progress · View progress log · Hide from summary · Open the bound document · Create document and bind… · Delete task…
+Edit task · Mark done / not done (asks when it was actually finished, default now) · Log progress · View progress log · Hide from summary · Open the bound document · Create document and bind… · Delete task…
 
 ### Log progress
 

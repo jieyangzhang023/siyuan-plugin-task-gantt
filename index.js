@@ -51,6 +51,8 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ign
 // Markdown for the results timeline, rendered by SiYuan's own Lute (sanitised; single newlines stay line breaks so old plain notes look the same).
 // Falls back to plain text whenever Lute or the DOM pieces are missing or anything throws.
 let luteInst = null;
+const mdCache = new Map(); // text -> cleaned DOM fragment; re-renders clone it instead of running Lute again
+const MD_CACHE_MAX = 600; // above TL_CAP, so a full day-range timeline stays cached
 const DROP_TAGS = "script,style,iframe,object,embed,link,meta,form,base,svg,math";
 function cleanHtml(root) {
   root.querySelectorAll(DROP_TAGS).forEach((e) => e.remove());
@@ -68,11 +70,18 @@ function mdBox(text, cls) {
     const L = typeof window !== "undefined" && window.Lute;
     if (!L || !L.New) return box;
     if (!luteInst) { luteInst = L.New(); luteInst.SetSanitize(true); luteInst.SetSoftBreak2HardBreak(true); luteInst.SetCodeSyntaxHighlight(false); }
-    const tpl = document.createElement("template");
-    tpl.innerHTML = luteInst.Md2HTML(String(text));
-    cleanHtml(tpl.content);
+    const key = String(text);
+    let frag = mdCache.get(key);
+    if (!frag) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = luteInst.Md2HTML(key);
+      cleanHtml(tpl.content);
+      frag = tpl.content;
+      if (mdCache.size >= MD_CACHE_MAX) mdCache.clear();
+      mdCache.set(key, frag);
+    }
     box.className = cls + " tp-md";
-    box.replaceChildren(tpl.content);
+    box.replaceChildren(frag.cloneNode(true));
     box.addEventListener("click", (ev) => { // links open outside, never inside the SiYuan window
       const a = ev.target && ev.target.closest ? ev.target.closest("a") : null;
       if (!a) return;
@@ -283,7 +292,7 @@ function projectStats(reminders, log, hidden, today, known) {
 
 // every progress record of one project's tasks, newest first. withDone: also list task completions as {done: true} entries
 // (not for a subtask that was completed together with its parent, nor when a 100% record already marks that day).
-function projectTimeline(reminders, log, pid, limit, known, withDone) {
+function projectTimeline(reminders, log, pid, limit, known, withDone, since, until) {
   const out = [];
   const inProject = (t) => (t.projectId && (!known || known.has(t.projectId)) ? t.projectId : "") === pid;
   for (const [tid, list] of Object.entries(log || {})) {
@@ -304,7 +313,8 @@ function projectTimeline(reminders, log, pid, limit, known, withDone) {
     }
   }
   out.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
-  return limit ? out.slice(0, limit) : out;
+  const kept = since || until ? out.filter((e) => { const d = e.time.slice(0, 10); return (!since || d >= since) && (!until || d <= until); }) : out; // since / until = "YYYY-MM-DD", both inclusive, either may be empty
+  return limit ? kept.slice(0, limit) : kept;
 }
 
 /* ---------- view ---------- */
@@ -914,8 +924,8 @@ class GanttView {
   }
 
   stateOf(n) {
-    const done = n.t.completed || (n.children.length > 0 && n.doneLeaves === n.leaves);
-    if (done) return "done";
+    // a parent is done only once it is marked done itself; all subtasks done leaves it open (or late) so it still gets closed by hand
+    if (n.t.completed) return "done";
     // a dated task with no end date has no deadline to miss
     if (n.noEnd && !n.children.length) return n.t.kanbanStatus === "abandoned" ? "dropped" : "open";
     const end = n.spanEnd != null ? n.spanEnd : n.end;
@@ -1381,6 +1391,32 @@ class GanttView {
     } catch (err) { showMessage("改期失败：" + err, 5000, "error"); }
   }
 
+  // marking done asks when the task was actually finished (default: now); run(when) gets "YYYY-MM-DD HH:mm"
+  askDoneTime(t, pending, run) {
+    const p = (n) => String(n).padStart(2, "0");
+    const nowStr = () => { const d = new Date(); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+    const when = h("input", { class: "b3-text-field fn__block", type: "datetime-local", value: nowStr() });
+    const form = h("div", null, h("div", { class: "tg-frow" }, h("span", null, "实际完成时间（默认现在，可改成过去的时间）"), when),
+      pending > 0 ? h("div", { class: "tg-preview" }, `还有 ${pending} 个未完成的子任务，将一并按此时间标记为已完成。`) : null);
+    const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消");
+    const bOk = h("button", { class: "b3-button b3-button--text" }, "标记完成");
+    const dlg = new Dialog({ title: `标记完成「${t.title}」`, width: "420px", content: `<div class="b3-dialog__content tg-form"></div><div class="b3-dialog__action"></div>` });
+    dlg.element.querySelector(".tg-form").append(form);
+    dlg.element.querySelector(".b3-dialog__action").append(bCancel, h("div", { class: "fn__space" }), bOk);
+    const submit = () => {
+      const v = String(when.value || "");
+      if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(v)) { if (when.focus) when.focus(); return; }
+      if (v.slice(0, 16) > nowStr()) { showMessage("完成时间不能晚于现在", 3000, "error"); return; }
+      dlg.destroy();
+      return run(v.slice(0, 10) + " " + v.slice(11, 16));
+    };
+    bCancel.addEventListener("click", () => dlg.destroy());
+    bOk.addEventListener("click", submit);
+    when.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); } });
+    if (when.focus) when.focus();
+    return { ctl: { when }, submit };
+  }
+
   async toggleDone(t) {
     const done = !t.completed;
     if ((t.repeat && t.repeat.enabled) || t.isRepeatInstance) {
@@ -1389,13 +1425,13 @@ class GanttView {
     }
     try {
       const pending = done ? await this.plugin.countPendingDescendants(t.id) : 0;
-      const run = async () => {
+      const run = async (when) => {
         try {
-          const n = await this.plugin.setCompleted(t.id, done);
+          const n = await this.plugin.setCompleted(t.id, done, when);
           this.say(done ? `已标记完成「${t.title}」${n > 1 ? `（含 ${n - 1} 个子任务）` : ""}` : `已取消完成「${t.title}」`, true);
         } catch (err) { showMessage("操作失败：" + err, 5000, "error"); }
       };
-      if (pending > 0) sConfirm("标记完成", `「${t.title}」还有 ${pending} 个未完成的子任务，将一并标记为已完成。继续？`, run);
+      if (done) this.askDoneTime(t, pending, run);
       else await run();
     } catch (err) { showMessage("操作失败：" + err, 5000, "error"); }
   }
@@ -1613,6 +1649,9 @@ class GanttView {
 
 /* ---------- project overview / detail page ---------- */
 const WEEKDAY = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+// what the results timeline shows: the latest N entries, or everything from the last few days (capped)
+const TL_RANGES = [["n20", "最近 20 条"], ["n60", "最近 60 条"], ["n100", "最近 100 条"], ["n200", "最近 200 条"], ["d3", "最近 3 天"], ["d7", "最近一周"], ["d14", "最近两周"], ["d30", "最近一个月"], ["custom", "自定义范围…"]];
+const TL_CAP = 500, TL_PAGE = 100; // most entries a day range loads / entries built at a time
 const FILTERS = [["open", "全部"], ["active", "进行中"], ["paused", "暂停"], ["completed", "已完成"], ["archived", "已归档"]];
 const TASK_STATUS = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃" };
 
@@ -1624,6 +1663,9 @@ class ProjectsView {
     this.filter = FILTERS.some(([k]) => k === lsGet("tp-filter", "open")) ? lsGet("tp-filter", "open") : "open";
     this.q = "";
     this.showDone = lsGet("tp-showdone", "0") === "1";
+    this.tlRange = TL_RANGES.some(([k]) => k === lsGet("tp-tlrange", "n60")) ? lsGet("tp-tlrange", "n60") : "n60";
+    this.tlFrom = RE_DATE.test(lsGet("tp-tlfrom", "")) ? lsGet("tp-tlfrom", "") : ""; // custom range, "" = open on that side
+    this.tlTo = RE_DATE.test(lsGet("tp-tlto", "")) ? lsGet("tp-tlto", "") : "";
     this.fold = new Set();
     this.reminders = {}; this.projects = {}; this.stats = new Map();
     this.model = { today: todayNum(), projectOptions: [], groups: [] }; // the shared dialogs read these
@@ -1907,15 +1949,40 @@ class ProjectsView {
 
   /* ----- results timeline ----- */
   timelinePanel(pid) {
-    const items = projectTimeline(this.reminders, this.plugin.log, pid, 60, new Set(this.projectList().map((p) => p.id)), true);
-    const groups = [];
-    for (const e of items) { const d = e.time.slice(0, 10); if (!groups.length || groups[groups.length - 1].d !== d) groups.push({ d, list: [] }); groups[groups.length - 1].list.push(e); }
+    const byDays = this.tlRange[0] === "d", custom = this.tlRange === "custom", amount = Number(this.tlRange.slice(1)) || 0;
+    const badSpan = custom && this.tlFrom && this.tlTo && this.tlFrom > this.tlTo;
+    const since = byDays ? fromNum(this.model.today - (amount - 1)) : custom ? this.tlFrom : "";
+    const until = custom ? this.tlTo : "";
+    const items = badSpan ? [] : projectTimeline(this.reminders, this.plugin.log, pid, byDays || custom ? TL_CAP : amount, new Set(this.projectList().map((p) => p.id)), true, since, until);
+    const range = h("select", { class: "b3-select", title: "成果时间线的显示范围" }, TL_RANGES.map(([k, t]) => h("option", { value: k, selected: k === this.tlRange }, t)));
+    range.addEventListener("change", () => {
+      this.tlRange = range.value; lsSet("tp-tlrange", this.tlRange);
+      if (this.tlRange === "custom" && !this.tlFrom && !this.tlTo) { this.tlFrom = fromNum(this.model.today - 6); this.tlTo = fromNum(this.model.today); lsSet("tp-tlfrom", this.tlFrom); lsSet("tp-tlto", this.tlTo); } // first time: the last 7 days
+      this.render();
+    });
+    const dateIn = (key, lsKey, val) => { const i = h("input", { class: "b3-text-field", type: "date", value: val }); i.addEventListener("change", () => { this[key] = RE_DATE.test(i.value) ? i.value : ""; lsSet(lsKey, this[key]); this.render(); }); return i; };
+    const span = custom ? h("div", { class: "tp-span" }, h("span", { class: "tp-dim" }, "从"), dateIn("tlFrom", "tp-tlfrom", this.tlFrom), h("span", { class: "tp-dim" }, "到"), dateIn("tlTo", "tp-tlto", this.tlTo), h("span", { class: "tp-dim" }, "（含当天，留空表示不限）")) : null;
     const head = (d) => { const n = toNum(d); return n == null ? d : `${d.slice(5)}　${WEEKDAY[wday(n)]}`; };
-    return h("div", { class: "tp-panel" }, h("div", { class: "tp-ph" }, h("b", null, "成果时间线"), h("span", { class: "tp-dim" }, items.length ? `最近 ${items.length} 条` : "")),
-      h("div", { class: "tp-tl" }, groups.length ? groups.map((g) => h("div", { class: "tp-day" }, h("div", { class: "tp-dayh" }, head(g.d)),
-        g.list.map((e) => h("div", { class: "tp-ev" }, h("span", { class: "tp-evt" }, e.time.slice(11)),
-          h("div", { class: "tp-evb" }, h("div", null, h("span", { class: "tp-evk", title: "查看这个任务的全部记录", onclick: () => { const t = this.reminders[e.taskId]; if (t) this.openProgressList(this.nodeFor(t)); } }, e.taskTitle), e.done ? this.pill("✓ 完成", "tp-b-done") : e.progress != null ? this.pill(e.progress + "%", "tp-b-today") : null),
-            e.done ? null : mdBox(e.text, "tp-evx")))))) : h("div", { class: "tp-dim tp-none" }, "还没有成果记录。在任务上点「记录」或完成任务，这里会按时间汇总，写周报时一目了然。")));
+    const evRow = (e) => h("div", { class: "tp-ev" }, h("span", { class: "tp-evt" }, e.time.slice(11)),
+      h("div", { class: "tp-evb" }, h("div", null, h("span", { class: "tp-evk", title: "查看这个任务的全部记录", onclick: () => { const t = this.reminders[e.taskId]; if (t) this.openProgressList(this.nodeFor(t)); } }, e.taskTitle), e.done ? this.pill("✓ 完成", "tp-b-done") : e.progress != null ? this.pill(e.progress + "%", "tp-b-today") : null),
+        e.done ? null : mdBox(e.text, "tp-evx")));
+    // only the first TL_PAGE entries are built; "显示更多" appends the next batch in place (no re-render, scroll position kept)
+    const body = h("div", null), foot = h("div", { class: "tp-more" });
+    let shown = 0, cur = null, curDay = "";
+    const showMore = () => {
+      for (const e of items.slice(shown, shown + TL_PAGE)) {
+        const d = e.time.slice(0, 10);
+        if (d !== curDay) { cur = h("div", { class: "tp-day" }, h("div", { class: "tp-dayh" }, head(d))); curDay = d; body.append(cur); }
+        cur.append(evRow(e));
+      }
+      shown = Math.min(items.length, shown + TL_PAGE);
+      const left = items.length - shown;
+      foot.replaceChildren(...(left > 0 ? [h("button", { class: "b3-button b3-button--outline", onclick: showMore }, `显示更多（还有 ${left} 条）`)] : []));
+    };
+    showMore();
+    return h("div", { class: "tp-panel" }, h("div", { class: "tp-ph" }, h("b", null, "成果时间线"), h("span", { class: "fn__flex-1" }), h("span", { class: "tp-dim" }, items.length ? `共 ${items.length} 条${byDays && items.length >= TL_CAP ? "（已截断）" : ""}` : ""), range),
+      span,
+      items.length ? h("div", { class: "tp-tl" }, body, foot) : h("div", { class: "tp-dim tp-none" }, badSpan ? "开始日期晚于结束日期，请调整范围。" : custom ? "所选日期范围内没有成果记录。" : byDays ? "这段时间内没有成果记录。可以换一个更长的范围。" : "还没有成果记录。在任务上点「记录」或完成任务，这里会按时间汇总，写周报时一目了然。"));
   }
 
   /* ----- dialogs ----- */
@@ -1993,7 +2060,7 @@ class ProjectsView {
 }
 
 // the dialogs, undo toast and task actions are the chart's own; the project page borrows them instead of keeping a second copy
-for (const m of ["openCreate", "parentChoices", "parentNodes", "openProgress", "openProgressList", "deleteTask", "toggleDone", "editTask", "say", "undo", "onKey"]) ProjectsView.prototype[m] = GanttView.prototype[m];
+for (const m of ["openCreate", "parentChoices", "parentNodes", "openProgress", "openProgressList", "deleteTask", "toggleDone", "askDoneTime", "editTask", "say", "undo", "onKey"]) ProjectsView.prototype[m] = GanttView.prototype[m];
 
 /* ---------- plugin ---------- */
 module.exports = class TaskGanttPlugin extends Plugin {
@@ -2466,7 +2533,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
 
   // Mirrors the host's own toggle: completed + completedTime ("YYYY-MM-DD HH:mm"), completing a task completes its subtasks,
   // pending mobile notifications are cancelled. Block-attribute sync and recurring tasks are NOT handled here.
-  async setCompleted(id, done) {
+  async setCompleted(id, done, when) {
     const host = this.getHost();
     const data = await host.loadReminderData(true);
     const t = data && data[id];
@@ -2474,7 +2541,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     await this.backupOnce(data);
     const before = this.snap(data, [id, ...this.descendantsOf(data, id).map((x) => x.id)]);
     const d = new Date(), p = (n) => String(n).padStart(2, "0");
-    const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    const stamp = /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(when || "") ? when : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     const changed = [];
     const apply = (x) => {
       if (done) { if (!x.completed) { x.completed = true; x.completedTime = stamp; changed.push(x.id); } }
