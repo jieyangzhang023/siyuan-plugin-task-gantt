@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
 
+## 0.15.0
+- The project page's results timeline now also lists task completions ("✓ 完成" with the completion time), mixed with progress records by time. A subtask completed together with its parent is not listed separately, and a completion is skipped when a 100% progress record already exists for that day.
+
 ## 0.14.1
 - Fix: an end date equal to the start date was thrown away, so the task silently became open-ended. A one-day task (end = start) is now kept when editing a task, creating one in the dialog, moving it on the chart, and when dragging the right edge of an open-ended bar back to its start day. "No end date" (open-ended, drawn up to today) is still its own thing.
 

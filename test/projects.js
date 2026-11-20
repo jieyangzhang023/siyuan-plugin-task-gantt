@@ -80,6 +80,15 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   // ---- projectTimeline
   const tl = projectTimeline(R, LOG, "P", 0, known); ok(tl.length === 2 && tl[0].text === "新成果" && tl[0].taskTitle === "A1", "timeline is newest first and project-scoped");
   ok(projectTimeline(R, LOG, "P", 1, known).length === 1, "timeline limit");
+  { const RR = { P1: { id: "P1", title: "父", projectId: "P", completed: true, completedTime: "2026-11-18 09:30" }, K1: { id: "K1", title: "子", projectId: "P", parentId: "P1", completed: true, completedTime: "2026-11-18 09:30" },
+      S1: { id: "S1", title: "单独", projectId: "P", completed: true, completedTime: "2026-11-18 11:00" }, N1: { id: "N1", title: "旧的无时间", projectId: "P", completed: true },
+      H1: { id: "H1", title: "有百分百记录", projectId: "P", completed: true, completedTime: "2026-11-18 12:00" }, O1: { id: "O1", title: "进行中", projectId: "P" }, X1: { id: "X1", title: "别的项目", projectId: "Q", completed: true, completedTime: "2026-11-18 13:00" } };
+    const LL = { H1: [{ id: "1", time: "2026-11-18 11:59", text: "收尾", progress: 100 }], S1: [{ id: "2", time: "2026-11-18 10:00", text: "做了一半" }] };
+    const k2 = new Set(["P", "Q"]);
+    ok(projectTimeline(RR, LL, "P", 0, k2).length === 2, "completions are not listed unless asked for");
+    const w = projectTimeline(RR, LL, "P", 0, k2, true);
+    ok(w.map((e) => e.taskId + (e.done ? "✓" : "")).join() === "H1,S1✓,S1,P1✓", "completions: parent and standalone listed, cascaded child / no-time / 100%-record day / other project / open task skipped: " + w.map((e) => e.taskId + (e.done ? "✓" : "")).join());
+    ok(w[1].done === true && w[1].time === "2026-11-18 11:00" && w[2].taskId === "S1" && !w[2].done, "newest first, completions mixed with progress records"); }
   ok(projectTimeline(R, LOG, "", 0, known).length === 1 && projectTimeline(R, LOG, "", 0, known)[0].text === "无项目", "timeline of unclassified");
 
   // ---- plugin: projects
@@ -127,7 +136,7 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   let rows = count(v.el, "tp-row"); ok(rows === 3, "task rows: open tasks only by default (子任务 is done): " + rows);
   v.showDone = true; v.render(); ok(count(v.el, "tp-row") === 4, "show completed adds the done subtask");
   v.showDone = false; v.fold.add(t3.id); v.render(); ok(count(v.el, "tp-row") === 3, "a parent with only a done child shows as a leaf; folding is safe");
-  ok(text(v.el).includes("完成了一部分") && count(v.el, "tp-ev") === 1, "timeline lists the progress record");
+  ok(text(v.el).includes("完成了一部分") && count(v.el, "tp-ev") === 2 && text(v.el).includes("✓ 完成"), "timeline lists the progress record and the completed subtask");
   // Markdown in the timeline: plain text when Lute is missing or unusable; Lute is asked for sanitised output with line breaks kept
   ok(count(v.el, "tp-evx") === 1 && count(v.el, "tp-md") === 0, "no Lute: result text stays plain");
   { const calls = []; global.window.Lute = { New: () => ({ SetSanitize: (x) => calls.push(["sanitize", x]), SetSoftBreak2HardBreak: (x) => calls.push(["br", x]), SetCodeSyntaxHighlight() {}, Md2HTML: (s) => { calls.push(["md", s]); return "<p>x</p>"; } }) };

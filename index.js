@@ -281,13 +281,27 @@ function projectStats(reminders, log, hidden, today, known) {
   return out;
 }
 
-// every progress record of one project's tasks, newest first
-function projectTimeline(reminders, log, pid, limit, known) {
+// every progress record of one project's tasks, newest first. withDone: also list task completions as {done: true} entries
+// (not for a subtask that was completed together with its parent, nor when a 100% record already marks that day).
+function projectTimeline(reminders, log, pid, limit, known, withDone) {
   const out = [];
+  const inProject = (t) => (t.projectId && (!known || known.has(t.projectId)) ? t.projectId : "") === pid;
   for (const [tid, list] of Object.entries(log || {})) {
     const t = (reminders || {})[tid];
-    if (!t || (t.projectId && (!known || known.has(t.projectId)) ? t.projectId : "") !== pid || !Array.isArray(list)) continue;
+    if (!t || !inProject(t) || !Array.isArray(list)) continue;
     for (const e of list) if (e && e.time) out.push({ ...e, taskId: tid, taskTitle: t.title || "" });
+  }
+  if (withDone) {
+    for (const t of Object.values(reminders || {})) {
+      if (!t || typeof t !== "object" || !t.id || !t.completed || !inProject(t)) continue;
+      const when = String(t.completedTime || "");
+      if (!/^\d{4}-\d\d-\d\d \d\d:\d\d/.test(when)) continue;
+      const par = t.parentId && reminders[t.parentId];
+      if (par && par.completed && par.completedTime === t.completedTime) continue; // completed together with its parent
+      const recs = Array.isArray((log || {})[t.id]) ? log[t.id] : [];
+      if (recs.some((e) => e && e.progress === 100 && String(e.time || "").slice(0, 10) === when.slice(0, 10))) continue;
+      out.push({ id: "done:" + t.id, time: when.slice(0, 16), done: true, text: "", taskId: t.id, taskTitle: t.title || "" });
+    }
   }
   out.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
   return limit ? out.slice(0, limit) : out;
@@ -1893,15 +1907,15 @@ class ProjectsView {
 
   /* ----- results timeline ----- */
   timelinePanel(pid) {
-    const items = projectTimeline(this.reminders, this.plugin.log, pid, 60, new Set(this.projectList().map((p) => p.id)));
+    const items = projectTimeline(this.reminders, this.plugin.log, pid, 60, new Set(this.projectList().map((p) => p.id)), true);
     const groups = [];
     for (const e of items) { const d = e.time.slice(0, 10); if (!groups.length || groups[groups.length - 1].d !== d) groups.push({ d, list: [] }); groups[groups.length - 1].list.push(e); }
     const head = (d) => { const n = toNum(d); return n == null ? d : `${d.slice(5)}　${WEEKDAY[wday(n)]}`; };
     return h("div", { class: "tp-panel" }, h("div", { class: "tp-ph" }, h("b", null, "成果时间线"), h("span", { class: "tp-dim" }, items.length ? `最近 ${items.length} 条` : "")),
       h("div", { class: "tp-tl" }, groups.length ? groups.map((g) => h("div", { class: "tp-day" }, h("div", { class: "tp-dayh" }, head(g.d)),
         g.list.map((e) => h("div", { class: "tp-ev" }, h("span", { class: "tp-evt" }, e.time.slice(11)),
-          h("div", { class: "tp-evb" }, h("div", null, h("span", { class: "tp-evk", title: "查看这个任务的全部记录", onclick: () => { const t = this.reminders[e.taskId]; if (t) this.openProgressList(this.nodeFor(t)); } }, e.taskTitle), e.progress != null ? this.pill(e.progress + "%", "tp-b-today") : null),
-            mdBox(e.text, "tp-evx")))))) : h("div", { class: "tp-dim tp-none" }, "还没有成果记录。在任务上点「记录」，这里会按时间汇总，写周报时一目了然。")));
+          h("div", { class: "tp-evb" }, h("div", null, h("span", { class: "tp-evk", title: "查看这个任务的全部记录", onclick: () => { const t = this.reminders[e.taskId]; if (t) this.openProgressList(this.nodeFor(t)); } }, e.taskTitle), e.done ? this.pill("✓ 完成", "tp-b-done") : e.progress != null ? this.pill(e.progress + "%", "tp-b-today") : null),
+            e.done ? null : mdBox(e.text, "tp-evx")))))) : h("div", { class: "tp-dim tp-none" }, "还没有成果记录。在任务上点「记录」或完成任务，这里会按时间汇总，写周报时一目了然。")));
   }
 
   /* ----- dialogs ----- */

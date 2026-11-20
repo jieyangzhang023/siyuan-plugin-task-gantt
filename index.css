@@ -235,6 +235,7 @@
 .tp-done .tp-rt { text-decoration: line-through; color: var(--b3-theme-on-surface-light); }
 .tp-when { flex: none; font-size: 12px; color: var(--b3-theme-on-surface-light); }
 .tp-b-late { background: color-mix(in srgb, #e5484d 16%, transparent); color: #e5484d; }
+.tp-b-done { background: color-mix(in srgb, #22a05a 16%, transparent); color: #22a05a; }
 .tp-b-today { background: color-mix(in srgb, #3b82f6 16%, transparent); color: #3b82f6; }
 .tp-b-st, .tp-dim-pill { background: color-mix(in srgb, var(--b3-theme-on-surface) 10%, transparent); }
 .tp-acts { display: none; gap: 2px; }
