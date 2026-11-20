@@ -1360,10 +1360,10 @@ class GanttView {
     return { draw };
   }
 
-  async schedule(n, a, b) {
+  async schedule(n, a, b, explicitEnd) {
     try {
-      await this.plugin.commitDates(n.id, a, b);
-      this.say(`已排期「${n.t.title}」${fromNum(a)}${b > a ? " ~ " + fromNum(b) : ""}`, true);
+      await this.plugin.commitDates(n.id, a, b, explicitEnd);
+      this.say(`已排期「${n.t.title}」${fromNum(a)}${b > a || explicitEnd ? " ~ " + fromNum(b) : ""}`, true);
     } catch (err) { showMessage("改期失败：" + err, 5000, "error"); }
   }
 
@@ -1586,7 +1586,7 @@ class GanttView {
       bar.classList.remove("tg-drag");
       // an open-ended task keeps having no end date unless its right edge was dragged
       const changed = n.ongoing && mode !== "r" ? ns !== s0 : ns !== s0 || ne !== e0;
-      if (moved && changed && ev.type === "pointerup") await this.schedule(n, ns, n.ongoing && mode !== "r" ? ns : ne);
+      if (moved && changed && ev.type === "pointerup") await this.schedule(n, ns, n.ongoing && mode !== "r" ? ns : ne, mode === "r"); // dragging the right edge always sets an end date, even on the start day
       this.dragging = false;
       this.reload();
     };
@@ -2205,7 +2205,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     const sibs = Object.values(data).filter((x) => x && (parentId ? x.parentId === parentId : !x.parentId && (x.projectId || "") === (pid || "")));
     const sort = sibs.reduce((m, x) => Math.max(m, Number(x.sort) || 0), 0) + 1000;
     const rec = { id, title, completed: false, priority: priority || "none", createdAt: new Date().toISOString(), kanbanStatus: kanbanStatus || (parent && parent.kanbanStatus) || "doing", sort, date };
-    if (endDate && endDate > date) rec.endDate = endDate;
+    if (endDate && endDate >= date) rec.endDate = endDate;
     if (pid) rec.projectId = pid;
     if (parentId) rec.parentId = parentId;
     data[id] = rec;
@@ -2235,7 +2235,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     const before = this.snap(data, [id, ...kids.map((k) => k.id)]);
     const set = (o, k, v) => { if (v === "" || v == null) delete o[k]; else o[k] = v; };
     t.title = title;
-    set(t, "date", date); set(t, "endDate", endDate && (!date || endDate > date) ? endDate : "");
+    set(t, "date", date); set(t, "endDate", endDate && (!date || endDate >= date) ? endDate : ""); // end == start is a one-day task, not an open-ended one
     set(t, "time", f.time || ""); set(t, "endTime", f.endTime || "");
     set(t, "note", f.note || "");
     if (f.priority && f.priority !== "none") t.priority = f.priority; else delete t.priority;
@@ -2474,7 +2474,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     return changed.length;
   }
 
-  async commitDates(id, startNum, endNum) {
+  async commitDates(id, startNum, endNum, explicitEnd) {
     const host = this.getHost();
     const data = await host.loadReminderData(true);
     const t = data && data[id];
@@ -2482,7 +2482,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     await this.backupOnce(data);
     const before = this.snap(data, [id]);
     t.date = fromNum(startNum);
-    if (endNum > startNum) t.endDate = fromNum(endNum); else delete t.endDate;
+    if (endNum > startNum || (endNum === startNum && (t.endDate || explicitEnd))) t.endDate = fromNum(endNum); else delete t.endDate; // a one-day task stays one-day when moved or shrunk to a day
     await host.saveReminderData(data);
     this.pushUndo(`改期「${t.title}」`, before);
     window.dispatchEvent(new CustomEvent("reminderUpdated"));

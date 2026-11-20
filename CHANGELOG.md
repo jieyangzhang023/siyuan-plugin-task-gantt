@@ -2,6 +2,9 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
 
+## 0.14.1
+- Fix: an end date equal to the start date was thrown away, so the task silently became open-ended. A one-day task (end = start) is now kept when editing a task, creating one in the dialog, moving it on the chart, and when dragging the right edge of an open-ended bar back to its start day. "No end date" (open-ended, drawn up to today) is still its own thing.
+
 ## 0.14.0
 - Results are rendered as Markdown (headings, bold / italic, lists, task lists, quotes, code blocks, tables, links) in the project page's results timeline and in the chart's "View progress log" list. SiYuan's own Lute renders it with sanitising on; single line breaks are kept, so existing plain notes look the same. Links open in the system browser. If Lute is unavailable the text is shown as plain text. The hover card is unchanged.
 - The text you wrote is shown in a bordered card, separate from the task title.

@@ -131,6 +131,8 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
       bar.listeners.pointermove.at(-1)({ clientX: dx * v.px }); await bar.listeners.pointerup.at(-1)({ type: "pointerup", pointerId: 1 }); };
     await drag("m", 3); ok(data.A.date === "2026-09-04" && !data.A.endDate, "middle drag shifts start only: " + data.A.date + " end=" + data.A.endDate);
     data.A = { ...v.reminders.A }; await drag("r", -2); ok(data.A.endDate === new Date((today - 2) * 864e5).toISOString().slice(0, 10), "right-edge drag sets end: " + data.A.endDate);
+    data.A = { ...v.reminders.A }; delete data.A.endDate; const a0 = nodes.A.start, ea = Math.max(nodes.A.end, today);
+    await drag("r", -(ea - a0) - 3); ok(data.A.endDate === data.A.date, "right-edge drag of an open-ended task down to its start day gives a one-day task: " + data.A.date + " ~ " + data.A.endDate);
   }
 
 

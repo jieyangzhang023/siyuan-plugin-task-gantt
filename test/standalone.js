@@ -21,6 +21,7 @@ const base = process.env.TASK_DATA_DIR || require("path").join(require("os").hom
 const R = JSON.parse(fs.readFileSync(base + "/reminder.json")), Pj = JSON.parse(fs.readFileSync(base + "/project.json"));
 const count = (el, cls) => { let n = 0; const w = (x) => { if (!x || !x.children) return; if (x.className && x.className.split(" ").includes(cls)) n++; x.children.forEach(w); }; w(el); return n; };
 const fromN = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
+const fromNumT = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
 const ok = (c, msg) => { console.log(c ? "PASS" : "FAIL", msg); if (!c) process.exitCode = 1; };
 
 // mock host over a COPY of real data
@@ -58,6 +59,14 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   ok(ta.title === "任务A2" && ta.date === "2026-11-11" && ta.endDate === "2026-11-15" && ta.time === "09:30" && ta.endTime === "11:00" && ta.note === "备注内容" && ta.priority === "high" && ta.kanbanStatus === "short_term", "updateTask writes fields");
   ok(P.store["tasks.json"][b.id].projectId === pid2 && P.store["tasks.json"][b.id].parentTitle === "任务A2", "project move carries subtasks; children's parentTitle refreshed");
   await P.undoLast(); ok(JSON.stringify(P.store["tasks.json"][a.id]) === snapA && P.store["tasks.json"][b.id].projectId === pid, "undo restores task and subtasks exactly");
+  // end date equal to the start date is a one-day task and must be kept (it is not the same as "no end date")
+  { const o = await P.createTask({ title: "单日", date: "2026-11-10", endDate: "2026-11-10", projectId: pid });
+    ok(P.store["tasks.json"][o.id].endDate === "2026-11-10", "create keeps end == start");
+    await P.updateTask(o.id, { title: "单日", date: "2026-11-10", endDate: "", projectId: pid }); ok(!("endDate" in P.store["tasks.json"][o.id]), "clearing the end date makes it open-ended");
+    await P.updateTask(o.id, { title: "单日", date: "2026-11-12", endDate: "2026-11-12", projectId: pid }); ok(P.store["tasks.json"][o.id].endDate === "2026-11-12", "edit keeps end == start");
+    await P.commitDates(o.id, 20400, 20400); ok(P.store["tasks.json"][o.id].endDate === fromNumT(20400), "moving a one-day task keeps it one-day");
+    await P.updateTask(o.id, { title: "单日", date: "2026-11-12", endDate: "", projectId: pid }); await P.commitDates(o.id, 20400, 20400); ok(!("endDate" in P.store["tasks.json"][o.id]), "an open-ended task stays open-ended when moved");
+    await P.commitDates(o.id, 20400, 20400, true); ok(P.store["tasks.json"][o.id].endDate === fromNumT(20400), "dragging the right edge of an open-ended task to its start day sets end == start"); }
   // validation
   for (const [bad, why] of [[{ title: "" }, "empty title"], [{ title: "x", date: "2026-11-10", endDate: "2026-11-01" }, "end before start"], [{ title: "x", parentId: b.id }, "parent under own subtask"], [{ title: "x", parentId: a.id }, "parent = itself"], [{ title: "x", date: "11/10" }, "bad date"]]) {
     err = null; try { await P.updateTask(a.id, bad); } catch (e) { err = e; } ok(!!err, "rejected: " + why);
