@@ -14,13 +14,13 @@ const DONE_OPTIONS = [["open", "仅未完成"], ["r7", "含近一周完成"], ["
 const FAR_AHEAD = 730; // timeline never extends more than ~2 years past today
 const FAR_BACK = 1100; // ...or ~3 years before today
 const MAX_DAY_CELLS = 900; // above this many days, the header uses weekly labels instead of one node per day
-const STATE_COLOR = { open: "#3b82f6", done: "#22a05a", late: "#e5484d", dropped: "#8a8f98", pending: "#8b5cf6" };
+const STATE_COLOR = { open: "#3b82f6", done: "#22a05a", late: "#e5484d", dropped: "#8a8f98", pending: "#8b5cf6", stalled: "#f5b301" };
 const PRIO = { high: "高", medium: "中", low: "低" };
 const LOG_FILE = "progress-log.json";
 const TASKS_FILE = "tasks.json", PROJECTS_FILE = "projects.json"; // the plugin's own task store
 const HIDDEN_FILE = "summary-hidden.json"; // task ids kept out of the 今日 / 未排期 lists (their subtasks too)
 const RE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
-const KANBAN = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃", completed: "已完成" };
+const KANBAN = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃", stalled: "已停滞", completed: "已完成" };
 const fmtMin = (m) => { m = Number(m) || 0; return m >= 60 ? `${Math.floor(m / 60)} 小时 ${m % 60} 分钟` : `${m} 分钟`; };
 
 /* ---------- date helpers (UTC day numbers, DST-safe) ---------- */
@@ -238,6 +238,7 @@ const PRIO_NAME = { none: "无", low: "低", medium: "中", high: "高" };
 // "undated" (no date of any kind) or null. Open-ended tasks are never late.
 function focusKind(t, today) {
   if (!t || t.completed || t.kanbanStatus === "abandoned") return null;
+  if (t.kanbanStatus === "stalled") return "stalled"; // stalled work is never today / overdue / undated: it has its own list
   const s = toNum(t.date), e = toNum(t.endDate), doing = t.kanbanStatus === "doing";
   if (s != null) {
     const ranged = e != null && e >= s;
@@ -260,7 +261,7 @@ function projectStats(reminders, log, hidden, today, known) {
   const isHidden = (id) => { for (let c = byId.get(id), n = 0; c && n++ < 64; c = c.parentId && byId.get(c.parentId)) if (hid.has(c.id)) return true; return false; };
   const pidOf = (t) => (t.projectId && (!known || known.has(t.projectId)) ? t.projectId : "");
   const wk0 = alignMonday(today), out = new Map();
-  const get = (pid) => out.get(pid) || out.set(pid, { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, doing: 0, today: 0, late: 0, undated: 0, recent: 0, weekly: new Array(12).fill(0), last: null }).get(pid);
+  const get = (pid) => out.get(pid) || out.set(pid, { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, doing: 0, today: 0, late: 0, undated: 0, stalled: 0, recent: 0, weekly: new Array(12).fill(0), last: null }).get(pid);
   for (const t of all) {
     const st = get(pidOf(t)); st.total++;
     if (hasKid.has(t.id)) continue;
@@ -278,6 +279,7 @@ function projectStats(reminders, log, hidden, today, known) {
       st.open++; if (t.kanbanStatus === "doing") st.doing++;
       const k = focusKind(t, today);
       if (k === "late") st.late++;
+      else if (k === "stalled") st.stalled++;
       else if ((k === "today" || k === "undated") && !(hid.size && isHidden(t.id))) st[k]++;
     }
   }
@@ -330,7 +332,7 @@ class GanttView {
     this.showUndated = lsGet("tg-undated", "0") === "1";
     this.sort = lsGet("tg-sort", "project") === "time" ? "time" : "project";
     this.dead = new Set(); // task ids whose bound document was deleted
-    this.sumOpen = ["today", "late", "undated", "hidden"].includes(lsGet("tg-sumopen", "")) ? lsGet("tg-sumopen", "") : ""; // which list under the summary strip is open
+    this.sumOpen = ["today", "late", "undated", "stalled", "hidden"].includes(lsGet("tg-sumopen", "")) ? lsGet("tg-sumopen", "") : ""; // which list under the summary strip is open
     this.fold = new Set();
     try { JSON.parse(lsGet("tg-fold", "[]")).forEach((x) => this.fold.add(x)); } catch (e) { /* ignore */ }
     this.labelW = Math.min(LABEL_MAX, Math.max(LABEL_MIN, Number(lsGet("tg-labelw", LABEL_DEF)) || LABEL_DEF));
@@ -580,7 +582,7 @@ class GanttView {
     const undoBtn = h("button", { class: "b3-button b3-button--outline", disabled: !this.plugin.undoStack.length, title: "撤销上一步改动（Ctrl+Z）", onclick: () => this.undo() }, "撤销");
     const refresh = h("button", { class: "b3-button b3-button--outline", onclick: () => this.reload() }, "刷新");
     const info = h("span", { class: "tg-info" }, `${shown} 条${hidden ? `，另有 ${hidden} 条未排期已隐藏` : ""} · 拖空白处平移 · 项目行或 Shift+拖任务行空白处=新建 · Ctrl+滚轮缩放 · 双击/右键编辑`);
-    const legend = h("span", { class: "tg-legend" }, [["pending", "未开始"], ["open", "进行中/未完成"], ["done", "已完成"], ["late", "超期（红色延伸段）"], ["dropped", "已放弃"]].map(([k, t]) =>
+    const legend = h("span", { class: "tg-legend" }, [["pending", "未开始"], ["open", "进行中/未完成"], ["done", "已完成"], ["stalled", "已停滞"], ["late", "超期（红色延伸段）"], ["dropped", "已放弃"]].map(([k, t]) =>
       h("span", { class: "tg-lg" }, h("i", { class: k === "late" ? "tg-lgl" : "", style: `background-color:${STATE_COLOR[k]}` }), t)));
     const addBtn = h("button", { class: "b3-button b3-button--text", onclick: () => this.openCreate({}) }, "＋ 新建任务");
     const projBtn = h("button", { class: "b3-button b3-button--outline", title: "打开项目管理页", onclick: () => this.plugin.openProjects() }, "项目…");
@@ -593,7 +595,7 @@ class GanttView {
   focusLists() {
     const today = this.model.today, hasKid = new Set();
     for (const t of Object.values(this.reminders || {})) if (t && t.parentId) hasKid.add(t.parentId);
-    const due = [], late = [], undated = [];
+    const due = [], late = [], undated = [], stalled = [];
     const hid = this.plugin.hidden || new Set(), byId = this.reminders || {};
     const isHidden = (id) => { // the task itself or any ancestor is marked
       for (let cur = byId[id], hops = 0; cur && hops++ < 64; cur = cur.parentId && byId[cur.parentId]) if (hid.has(cur.id)) return true;
@@ -605,6 +607,7 @@ class GanttView {
       if (hasKid.has(n.id) || t.completed || t.kanbanStatus === "abandoned") return;
       const k = focusKind(t, today);
       if (k === "late") { late.push(n); return; }
+      if (k === "stalled") { stalled.push(n); return; }
       if (hid.size && isHidden(n.id)) return; // overdue is never hidden
       if (k === "today") due.push(n); else if (k === "undated") undated.push(n);
     };
@@ -615,7 +618,8 @@ class GanttView {
     const st = { doing: 0, short_term: 1, long_term: 2 };
     undated.sort((a, b) => (st[a.t.kanbanStatus] ?? 3) - (st[b.t.kanbanStatus] ?? 3) || (pr[a.t.priority] ?? 3) - (pr[b.t.priority] ?? 3) || String(a.t.title).localeCompare(String(b.t.title)));
     const marked = [...hid].map((id) => byId[id]).filter(Boolean).map((t) => this.nodeOf(t.id)).filter(Boolean);
-    return { due, late, undated, marked };
+    stalled.sort((a, b) => (pr[a.t.priority] ?? 3) - (pr[b.t.priority] ?? 3) || String(a.t.title).localeCompare(String(b.t.title)));
+    return { due, late, undated, stalled, marked };
   }
 
   nodeOf(id) {
@@ -626,21 +630,22 @@ class GanttView {
   }
 
   renderSummary() {
-    const { due, late, undated, marked } = this.focusLists();
+    const { due, late, undated, stalled, marked } = this.focusLists();
     const today = this.model.today, md = (d) => fromNum(d).slice(5);
     const open = this.sumOpen;
     const chip = (key, label, count, cls) => h("button", { class: `tg-chip ${cls}` + (open === key ? " tg-on" : ""), title: open === key ? "收起" : "展开清单",
       onclick: () => { this.sumOpen = open === key ? "" : key; lsSet("tg-sumopen", this.sumOpen); this.render(); } }, label, h("b", null, String(count)));
     const strip = h("div", { class: "tg-focus" }, chip("today", "今日", due.length, "tg-c-today"), chip("late", "超期", late.length, late.length ? "tg-c-late" : "tg-c-ok"),
       chip("undated", "未排期", undated.length, "tg-c-undated"),
+      chip("stalled", "已停滞", stalled.length, stalled.length ? "tg-c-stalled" : "tg-c-undated"),
       marked.length ? chip("hidden", "已隐藏", marked.length, "tg-c-undated") : null,
       late.length ? null : h("span", { class: "tg-ok" }, "无超期任务"));
     const wrap = h("div", { class: "tg-focuswrap" }, strip);
     if (!open) return wrap;
-    const list = open === "late" ? late : open === "undated" ? undated : open === "hidden" ? marked : due, isLate = open === "late", isUndated = open === "undated", isHiddenList = open === "hidden";
+    const list = open === "late" ? late : open === "undated" ? undated : open === "stalled" ? stalled : open === "hidden" ? marked : due, isLate = open === "late", isUndated = open === "undated", isStalled = open === "stalled", isHiddenList = open === "hidden";
     const item = (n) => {
       const t = n.t, proj = this.projects[t.projectId];
-      const when = isHiddenList ? "不计入今日 / 未排期（含子任务）" : isUndated ? (KANBAN[t.kanbanStatus] || "未排期") : isLate ? `超期 ${today - n.end} 天 · 截止 ${md(n.end)}`
+      const when = isHiddenList ? "不计入今日 / 未排期（含子任务）" : isStalled ? (n.start != null ? `${md(n.start)}${n.end > n.start ? " ~ " + md(n.end) : ""}` : "未排期") : isUndated ? (KANBAN[t.kanbanStatus] || "未排期") : isLate ? `超期 ${today - n.end} 天 · 截止 ${md(n.end)}`
         : n.kind === "own" ? (n.noEnd ? "持续中" : n.end > n.start ? `${md(n.start)} ~ ${md(n.end)}` : md(n.start)) : n.kind === "deadline" ? "今日截止" : "进行中（未排期）";
       const bProg = h("button", { class: "b3-button b3-button--outline", onclick: () => this.openProgress(n) }, "记录进度");
       if (isHiddenList) {
@@ -650,13 +655,14 @@ class GanttView {
       }
       const bToday = isUndated ? h("button", { class: "b3-button b3-button--outline", title: "把开始日期设为今天（1 天）", onclick: () => this.schedule(n, today, today) }, "排到今天") : null;
       const bDone = h("button", { class: "b3-button b3-button--outline", onclick: () => this.toggleDone(t) }, "完成");
+      const bResume = isStalled ? h("button", { class: "b3-button b3-button--outline", title: "改回进行中", onclick: () => this.setStalled(t, false) }, "恢复进行") : null;
       return h("div", { class: "tg-fitem" },
         h("span", { class: "tg-ftitle", title: "在甘特图中定位", onclick: () => this.locate(n) }, t.title || "(无标题)"),
         h("span", { class: "tg-meta" }, proj ? proj.title : "未分类"),
         h("span", { class: "tg-fwhen" + (isLate ? " tg-latew" : "") }, when),
-        h("span", { class: "fn__flex-1" }), bToday, bProg, bDone);
+        h("span", { class: "fn__flex-1" }), bToday, bResume, bProg, bDone);
     };
-    wrap.append(h("div", { class: "tg-fpanel" }, list.length ? list.map(item) : h("div", { class: "tg-empty" }, isLate ? "没有超期任务。" : isHiddenList ? "没有被隐藏的任务。" : isUndated ? "没有未排期的任务。" : "今天没有安排的任务。")));
+    wrap.append(h("div", { class: "tg-fpanel" }, list.length ? list.map(item) : h("div", { class: "tg-empty" }, isLate ? "没有超期任务。" : isStalled ? "没有已停滞的任务。" : isHiddenList ? "没有被隐藏的任务。" : isUndated ? "没有未排期的任务。" : "今天没有安排的任务。")));
     return wrap;
   }
 
@@ -926,6 +932,7 @@ class GanttView {
   stateOf(n) {
     // a parent is done only once it is marked done itself; all subtasks done leaves it open (or late) so it still gets closed by hand
     if (n.t.completed) return "done";
+    if (n.t.kanbanStatus === "stalled") return "stalled"; // yellow, and never counted as overdue
     // a dated task with no end date has no deadline to miss
     if (n.noEnd && !n.children.length) return n.t.kanbanStatus === "abandoned" ? "dropped" : "open";
     const end = n.spanEnd != null ? n.spanEnd : n.end;
@@ -938,6 +945,7 @@ class GanttView {
     const menu = new Menu("task-gantt-ctx");
     menu.addItem({ icon: "iconEdit", label: "编辑任务", click: () => this.editTask(t) });
     menu.addItem({ icon: t.completed ? "iconUndo" : "iconCheck", label: t.completed ? "取消完成" : "标记完成", click: () => this.toggleDone(t) });
+    if (!t.completed && t.kanbanStatus !== "abandoned") menu.addItem({ icon: "iconPause", label: t.kanbanStatus === "stalled" ? "恢复进行" : "标记为已停滞", click: () => this.setStalled(t, t.kanbanStatus !== "stalled") });
     menu.addItem({ icon: "iconEdit", label: "记录进度…", click: () => this.openProgress(n) });
     const nLog = this.plugin.progressOf(t.id).length;
     const hid = this.plugin.hidden || new Set();
@@ -1058,7 +1066,7 @@ class GanttView {
     const start = h("input", { class: "b3-text-field fn__block", type: "date", value: edit ? (preset.date != null ? fromNum(preset.date) : "") : fromNum(preset.date != null ? preset.date : today) });
     const end = h("input", { class: "b3-text-field fn__block", type: "date", value: edit ? (preset.endDate != null ? fromNum(preset.endDate) : "") : preset.endDate != null && preset.endDate > (preset.date != null ? preset.date : today) ? fromNum(preset.endDate) : "" });
     const prio = sel([["none", "无"], ["low", "低"], ["medium", "中"], ["high", "高"]], edit ? edit.priority || "none" : "none");
-    const statuses = edit ? [["doing", "进行中"], ["short_term", "短期"], ["long_term", "长期"], ["abandoned", "已放弃"]] : [["doing", "进行中"], ["short_term", "短期"], ["long_term", "长期"]];
+    const statuses = edit ? [["doing", "进行中"], ["short_term", "短期"], ["long_term", "长期"], ["stalled", "已停滞"], ["abandoned", "已放弃"]] : [["doing", "进行中"], ["short_term", "短期"], ["long_term", "长期"], ["stalled", "已停滞"]];
     const status = sel(statuses, edit ? edit.kanbanStatus || "doing" : parentRec && statuses.some(([v]) => v === parentRec.kanbanStatus) ? parentRec.kanbanStatus : "doing");
     const stime = h("input", { class: "b3-text-field fn__block", type: "time", value: edit ? edit.time || "" : "" });
     const etime = h("input", { class: "b3-text-field fn__block", type: "time", value: edit ? edit.endTime || "" : "" });
@@ -1417,6 +1425,13 @@ class GanttView {
     return { ctl: { when }, submit };
   }
 
+  async setStalled(t, on) {
+    try {
+      await this.plugin.setKanban(t.id, on ? "stalled" : "doing");
+      this.say(on ? `「${t.title}」已标记为已停滞（不再计入超期）` : `「${t.title}」已恢复进行`, true);
+    } catch (err) { showMessage("操作失败：" + err, 5000, "error"); }
+  }
+
   async toggleDone(t) {
     const done = !t.completed;
     if ((t.repeat && t.repeat.enabled) || t.isRepeatInstance) {
@@ -1653,7 +1668,7 @@ const WEEKDAY = ["周一", "周二", "周三", "周四", "周五", "周六", "�
 const TL_RANGES = [["n20", "最近 20 条"], ["n60", "最近 60 条"], ["n100", "最近 100 条"], ["n200", "最近 200 条"], ["d3", "最近 3 天"], ["d7", "最近一周"], ["d14", "最近两周"], ["d30", "最近一个月"], ["custom", "自定义范围…"]];
 const TL_CAP = 500, TL_PAGE = 100; // most entries a day range loads / entries built at a time
 const FILTERS = [["open", "全部"], ["active", "进行中"], ["paused", "暂停"], ["completed", "已完成"], ["archived", "已归档"]];
-const TASK_STATUS = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃" };
+const TASK_STATUS = { doing: "进行中", short_term: "短期", long_term: "长期", stalled: "已停滞", abandoned: "已放弃" };
 
 class ProjectsView {
   constructor(el, plugin) {
@@ -1792,7 +1807,7 @@ class ProjectsView {
   }
 
   card(p) {
-    const real = !p.virtual, st = this.stats.get(real ? p.id : "") || { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, today: 0, late: 0, undated: 0, recent: 0, weekly: new Array(12).fill(0), last: null };
+    const real = !p.virtual, st = this.stats.get(real ? p.id : "") || { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, today: 0, late: 0, undated: 0, stalled: 0, recent: 0, weekly: new Array(12).fill(0), last: null };
     const denom = st.leaves - st.dropped, pct = denom > 0 ? Math.round((st.done / denom) * 100) : 0;
     const color = p.color || "#3b82f6", status = real ? this.statusOf(p) : "";
     const stat = (n, label, cls) => h("div", { class: "tp-stat " + (cls || "") + (n ? "" : " tp-zero") }, h("b", null, String(n)), h("span", null, label));
@@ -1804,7 +1819,7 @@ class ProjectsView {
         real ? this.pill(PROJECT_STATUS.concat([["archived", "已归档"]]).find(([k]) => k === status)[1], "tp-s-" + status) : null,
         real && p.priority && p.priority !== "none" ? this.pill(PRIO_NAME[p.priority], "tp-p-" + p.priority) : null),
       h("div", { class: "tp-prog" }, h("div", { class: "tp-bar2" }, h("i", { style: `width:${pct}%` })), h("span", { class: "tp-pct" }, `${pct}%`), h("span", { class: "tp-dim" }, `${st.done} / ${denom} 个任务`)),
-      h("div", { class: "tp-stats" }, stat(st.today, "今日"), stat(st.late, "超期", st.late ? "tp-red" : ""), stat(st.undated, "未排期"), stat(st.open, "未完成")),
+      h("div", { class: "tp-stats" }, stat(st.today, "今日"), stat(st.late, "超期", st.late ? "tp-red" : ""), stat(st.undated, "未排期"), stat(st.stalled, "已停滞"), stat(st.open, "未完成")),
       last,
       h("div", { class: "tp-cf" }, dates ? h("span", { class: "tp-dim" }, dates) : null, h("span", { class: "fn__flex-1" }), this.spark(st.weekly, color),
         h("button", { class: "b3-button b3-button--outline tp-mini", title: "在甘特图中只看这个项目", onclick: (e) => { e.stopPropagation(); this.viewInGantt(real ? p.id : ""); } }, "甘特图")));
@@ -1818,12 +1833,12 @@ class ProjectsView {
 
   renderDetail() {
     const none = this.sel === "__none", pid = none ? "" : this.sel, p = none ? { id: "", title: "未分类", color: "#8a8f98", virtual: true } : this.projects[pid];
-    const st = this.stats.get(pid) || { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, today: 0, late: 0, undated: 0, recent: 0, weekly: new Array(12).fill(0), last: null };
+    const st = this.stats.get(pid) || { total: 0, leaves: 0, done: 0, dropped: 0, open: 0, today: 0, late: 0, undated: 0, stalled: 0, recent: 0, weekly: new Array(12).fill(0), last: null };
     const denom = st.leaves - st.dropped, pct = denom > 0 ? Math.round((st.done / denom) * 100) : 0, color = p.color || "#3b82f6";
     const tile = (n, label, cls) => h("div", { class: "tp-tile " + (cls || "") }, h("b", null, String(n)), h("span", null, label));
     const stats = h("div", { class: "tp-tiles" },
       h("div", { class: "tp-tile tp-big", style: `--pc:${color}` }, h("b", null, `${pct}%`), h("span", null, `完成 ${st.done} / ${denom}`), h("div", { class: "tp-bar2" }, h("i", { style: `width:${pct}%` }))),
-      tile(st.today, "今日"), tile(st.late, "超期", st.late ? "tp-red" : ""), tile(st.undated, "未排期"), tile(st.recent, "近 30 天完成"),
+      tile(st.today, "今日"), tile(st.late, "超期", st.late ? "tp-red" : ""), tile(st.undated, "未排期"), tile(st.stalled, "已停滞", st.stalled ? "tp-amber" : ""), tile(st.recent, "近 30 天完成"),
       h("div", { class: "tp-tile tp-wide" }, this.spark(st.weekly, color), h("span", null, "近 12 周完成")));
     return h("div", { class: "tp-detail" }, none ? this.noneInfo(st) : this.infoCard(p), stats,
       h("div", { class: "tp-cols" }, this.taskPanel(pid, p), this.timelinePanel(pid)));
@@ -1940,7 +1955,7 @@ class ProjectsView {
       tog, box,
       h("span", { class: "tp-rt", title: "编辑任务", onclick: () => this.editTask(t) }, t.title || "(无标题)"),
       hid.has(t.id) ? this.pill("已隐藏", "tp-dim-pill") : null,
-      TASK_STATUS[t.kanbanStatus] && t.kanbanStatus !== "doing" ? this.pill(TASK_STATUS[t.kanbanStatus], "tp-b-st") : null,
+      TASK_STATUS[t.kanbanStatus] && t.kanbanStatus !== "doing" ? this.pill(TASK_STATUS[t.kanbanStatus], t.kanbanStatus === "stalled" ? "tp-b-stall" : "tp-b-st") : null,
       badge, prog ? h("span", { class: "tp-dim", title: "成果记录条数" }, `◆${prog}`) : null,
       h("span", { class: "fn__flex-1" }),
       h("span", { class: "tp-when" + (kind === "late" ? " tp-red" : "") }, this.fmtWhen(t)),
@@ -2533,6 +2548,22 @@ module.exports = class TaskGanttPlugin extends Plugin {
 
   // Mirrors the host's own toggle: completed + completedTime ("YYYY-MM-DD HH:mm"), completing a task completes its subtasks,
   // pending mobile notifications are cancelled. Block-attribute sync and recurring tasks are NOT handled here.
+  // Quick status switch (e.g. doing <-> stalled); undoable.
+  async setKanban(id, status) {
+    const host = this.getHost();
+    const data = await host.loadReminderData(true);
+    const t = data && data[id];
+    if (!t) throw new Error("任务已不存在");
+    await this.backupOnce(data);
+    const before = this.snap(data, [id]);
+    t.kanbanStatus = status;
+    t.updatedAt = new Date().toISOString();
+    await host.saveReminderData(data);
+    this.pushUndo(`${status === "stalled" ? "停滞" : "恢复"}「${t.title}」`, before);
+    window.dispatchEvent(new CustomEvent("reminderUpdated"));
+    return t;
+  }
+
   async setCompleted(id, done, when) {
     const host = this.getHost();
     const data = await host.loadReminderData(true);

@@ -21,6 +21,7 @@ A Gantt chart and project pages for your tasks inside SiYuan: group tasks by pro
 | Purple bar | Not started yet: open, and its first day is still ahead |
 | Blue bar | Open (in progress, or started and not done) |
 | Green bar | Done (struck-through title, ✓ prefix) |
+| Yellow bar | Stalled (never overdue, no red tail) |
 | Red hatched tail | Overdue: open and the end date has passed; drawn from the end date to today, title prefixed with `!` |
 | Ring / bold title | In progress today |
 | Bar ending with ▸ | "In progress" task with no end date: drawn from its start to today and never counted as overdue |
@@ -33,11 +34,12 @@ Hover a bar or a title for a card with project, dates, status, progress and the 
 
 ### Today / overdue / unscheduled strip
 
-Under the toolbar: `Today N`, `Overdue N`, `Unscheduled N`. Click one to open its list; click a title to jump to the task on the chart; each row has "Log progress", "Done" (and "Schedule for today" for unscheduled tasks).
+Under the toolbar: `Today N`, `Overdue N`, `Unscheduled N`, `Stalled N`. Click one to open its list; click a title to jump to the task on the chart; each row has "Log progress", "Done" (and "Schedule for today" for unscheduled tasks).
 
 - **Today**: open leaf tasks whose date range covers today, or that are open-ended and in progress, or due today. Sorted by priority.
 - **Overdue**: open tasks whose end date has passed, most overdue first. Tasks without an end date are never overdue.
 - **Unscheduled**: tasks with no date at all.
+- **Stalled**: open tasks whose status is "Stalled" (pick it in the edit dialog, or right-click → "Mark as stalled / Resume"). They are drawn yellow and are never counted as Today, Overdue or Unscheduled — an end date in the past does not make them overdue. Each row has a "Resume" button.
 - Right-click a task → "Hide from summary (with subtasks)" keeps long-lived container tasks out of Today / Unscheduled (overdue is never hidden). Hidden tasks are listed under "Hidden N" and can be restored.
 
 ## Rescheduling

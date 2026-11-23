@@ -45,6 +45,7 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     [T({ endDate: day(-2) }), "late", "deadline passed"], [T({ endDate: day(0) }), "today", "due today"], [T({ endDate: day(3) }), null, "deadline later"],
     [T({}), "undated", "no dates"], [T({ availableStartDate: day(-9) }), null, "only an available date"],
     [T({ completed: true }), null, "done"], [T({ kanbanStatus: "abandoned" }), null, "dropped"],
+    [T({ kanbanStatus: "stalled", date: day(-3), endDate: day(-1) }), "stalled", "stalled + past end is not overdue"], [T({ kanbanStatus: "stalled" }), "stalled", "stalled, no dates, not undated"], [T({ kanbanStatus: "stalled", completed: true }), null, "stalled but done"],
   ];
   for (const [t, want, why] of cases) ok(focusKind(t, today) === want, `focusKind: ${why} -> ${want}`);
 

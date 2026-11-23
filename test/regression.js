@@ -115,6 +115,18 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     ok(nd.PP.doneLeaves === nd.PP.leaves && v.stateOf(nd.PP) === "late", "all subtasks done but the parent is not: stays open, overdue shows: " + v.stateOf(nd.PP));
     ok(v.stateOf(nd.QQ) === "done", "a parent marked done is done"); }
 
+  // ---- stalled: yellow, never overdue, own chip + list
+  { const T = (id, o) => Object.assign({ id, title: id, completed: false, createdAt: "x", projectId: "", kanbanStatus: "doing" }, o);
+    v.reminders = { S1: T("S1", { date: "2026-09-01", endDate: "2026-09-05", kanbanStatus: "stalled" }), S2: T("S2", { kanbanStatus: "stalled" }), L9: T("L9", { date: "2026-09-01", endDate: "2026-09-05" }) };
+    v.projects = {}; v.done = "all"; v.status = "all"; v.q = ""; v.sort = "project"; v.showUndated = true; v.render();
+    const nd = {}; const w2 = (n) => { nd[n.id] = n; n.children.forEach(w2); }; v.model.groups.forEach((g) => g.roots.forEach(w2));
+    ok(v.stateOf(nd.S1) === "stalled" && v.stateOf(nd.L9) === "late", "stalled is not late, a normal overdue task still is");
+    const fl = v.focusLists();
+    ok(fl.stalled.length === 2 && fl.late.length === 1 && fl.late[0].id === "L9" && !fl.undated.some((n) => n.id === "S2"), "focus lists: stalled=2, late only L9, stalled undated not in 未排期");
+    ok(JSON.stringify(v.renderSummary()).includes("已停滞"), "summary strip has the 已停滞 chip");
+    v.taskMenu({ clientX: 1, clientY: 1, target: { closest: () => null } }, nd.S1); ok(menus.at(-1).items.some((x) => x.includes("恢复进行")), "stalled task menu offers 恢复进行");
+    v.taskMenu({ clientX: 1, clientY: 1, target: { closest: () => null } }, nd.L9); ok(menus.at(-1).items.some((x) => x.includes("标记为已停滞")), "normal task menu offers 标记为已停滞"); }
+
   // ---- open-ended tasks
   { const T = (id, o) => Object.assign({ id, title: id, completed: false, createdAt: "x", projectId: "" }, o);
     v.reminders = { A: T("A", { date: "2026-09-01", kanbanStatus: "doing" }), B: T("B", { date: "2026-09-01", kanbanStatus: "short_term" }),
