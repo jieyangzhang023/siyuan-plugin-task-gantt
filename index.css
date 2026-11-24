@@ -283,3 +283,13 @@
 .tp-md hr { border: none; border-top: 1px solid var(--b3-border-color); margin: 6px 0; }
 .tp-more { text-align: center; padding: 8px 0 2px; }
 .tp-span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+
+/* ---------- task tags ---------- */
+.tg-tagdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; margin-right: 4px; }
+.tg-tagchip { padding: 3px 10px; }
+.tg-tagchip .tg-tagname { color: var(--b3-theme-on-surface); }
+.tg-tagchip .tg-tagdot { margin-right: 0; }
+.tg-tagmgr { padding: 2px 10px; }
+.tg-tagrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tg-tagcolor { width: 32px; height: 26px; padding: 0; border: 1px solid var(--b3-border-color); border-radius: 4px; background: none; cursor: pointer; flex: none; }
+.tg-tagnew { padding-top: 8px; border-top: 1px dashed var(--b3-border-color); }

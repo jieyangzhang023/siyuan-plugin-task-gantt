@@ -2,6 +2,11 @@
 
 Versions follow `plugin.json`; each release is tagged `vX.Y.Z`. 中文版：[CHANGELOG_zh_CN.md](./CHANGELOG_zh_CN.md)
 
+## 0.18.0
+- Task category tags: each tag has a name and a colour. Two come built in — "排期任务" (blue, the default for tasks without a tag) and "插入任务" (red) — and you can add, rename, recolour or delete your own under "标签…" in the summary strip. Pick a tag when creating or editing a task.
+- An open task's bar uses its tag colour, with a small dot before the title; not-started (purple), stalled (yellow), done (green) and the red overdue tail keep their state colours. The hover card shows the tag.
+- The summary strip shows each tag with its open-task count; click a tag to filter the chart to it. The project page marks tagged tasks with a badge. Deleting a tag sends its tasks back to the default tag.
+
 ## 0.17.0
 - New task status "Stalled" (已停滞): drawn yellow on the chart and never counted as overdue (no red tail, not in the Overdue list), nor as Today / Unscheduled. Pick it in the edit dialog, or right-click → "Mark as stalled / Resume" (undoable).
 - New "Stalled N" chip in the summary strip, next to Today / Overdue / Unscheduled, listing those tasks with a "Resume" button; the project page also shows the stalled count and a badge on task rows.

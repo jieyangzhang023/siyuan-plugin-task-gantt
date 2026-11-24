@@ -127,6 +127,30 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
     v.taskMenu({ clientX: 1, clientY: 1, target: { closest: () => null } }, nd.S1); ok(menus.at(-1).items.some((x) => x.includes("恢复进行")), "stalled task menu offers 恢复进行");
     v.taskMenu({ clientX: 1, clientY: 1, target: { closest: () => null } }, nd.L9); ok(menus.at(-1).items.some((x) => x.includes("标记为已停滞")), "normal task menu offers 标记为已停滞"); }
 
+  // ---- task tags: default tags, colour, count, filter, create/edit/delete
+  { const T = (id, o) => Object.assign({ id, title: id, completed: false, createdAt: "x", projectId: "", kanbanStatus: "doing", date: "2026-11-24", endDate: "2026-11-26" }, o);
+    plugin.saveData = plugin.saveData || (async () => {}); plugin.loadData = plugin.loadData || (async () => null);
+    await plugin.loadTags();
+    ok(plugin.tags.length === 2 && plugin.tags[0].name === "排期任务" && plugin.tags[1].name === "插入任务" && plugin.tags[1].color === "#e5484d", "default tags: 排期任务 blue, 插入任务 red");
+    const rec = await plugin.createTask({ title: "插队", date: "2026-11-24", tagId: "insert" }); const rec2 = await plugin.createTask({ title: "正常", date: "2026-11-24" });
+    ok(data[rec.id].tagId === "insert" && !("tagId" in data[rec2.id]), "createTask stores a non-default tag only");
+    await plugin.updateTask(rec2.id, { title: "正常", date: "2026-11-24", endDate: "", tagId: "insert" }); ok(data[rec2.id].tagId === "insert", "updateTask sets the tag");
+    await plugin.updateTask(rec2.id, { title: "正常", date: "2026-11-24", endDate: "" }); ok(data[rec2.id].tagId === "insert", "updateTask without tagId keeps it");
+    await plugin.updateTask(rec2.id, { title: "正常", date: "2026-11-24", endDate: "", tagId: "plan" }); ok(!("tagId" in data[rec2.id]), "choosing the default tag clears tagId");
+    ok(plugin.tagOf({ tagId: "gone" }).id === "plan", "unknown tag falls back to the default");
+    v.reminders = { A: T("A", { tagId: "insert" }), B: T("B"), C: T("C", { tagId: "insert", completed: true }), D: T("D", { tagId: "insert", kanbanStatus: "stalled" }) };
+    v.projects = {}; v.done = "all"; v.status = "all"; v.q = ""; v.sort = "project"; v.showUndated = true; v.tagFilter = ""; v.render();
+    const cnt = v.tagCounts(); ok(cnt.get("insert") === 2 && cnt.get("plan") === 1, "counts open leaf tasks per tag (done excluded, stalled included): " + JSON.stringify([...cnt]));
+    ok(JSON.stringify(v.renderSummary()).includes("插入任务"), "tag chips shown in the strip");
+    v.tagFilter = "insert"; v.render();
+    const html = JSON.stringify(v.el, (k, x) => (k === "listeners" ? undefined : x));
+    ok(html.includes('"A"') || html.includes("data-id"), "sanity");
+    const shown = ["A", "B", "C", "D"].filter((id) => html.includes(`"data-id":"${id}"`) || html.includes(`data-id=\\"${id}\\"`));
+    ok(shown.join("") === "ACD", "tag filter hides tasks of other tags (B): " + shown.join());
+    v.tagFilter = "";
+    data[rec.id].tagId = "insert"; const n = await plugin.deleteTag("insert"); ok(n >= 1 && !data[rec.id].tagId && plugin.tags.length === 1, "deleteTag sends its tasks back to the default tag");
+    let err = null; try { await plugin.deleteTag("plan"); } catch (e) { err = e; } ok(!!err, "the default tag cannot be deleted"); }
+
   // ---- open-ended tasks
   { const T = (id, o) => Object.assign({ id, title: id, completed: false, createdAt: "x", projectId: "" }, o);
     v.reminders = { A: T("A", { date: "2026-09-01", kanbanStatus: "doing" }), B: T("B", { date: "2026-09-01", kanbanStatus: "short_term" }),

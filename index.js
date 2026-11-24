@@ -18,6 +18,10 @@ const STATE_COLOR = { open: "#3b82f6", done: "#22a05a", late: "#e5484d", dropped
 const PRIO = { high: "高", medium: "中", low: "低" };
 const LOG_FILE = "progress-log.json";
 const TASKS_FILE = "tasks.json", PROJECTS_FILE = "projects.json"; // the plugin's own task store
+const TAG_FILE = "task-tags.json"; // user-defined task categories: [{id, name, color}]
+const DEFAULT_TAG = "plan"; // tasks without a tagId belong to it; it cannot be deleted
+const DEFAULT_TAGS = [{ id: DEFAULT_TAG, name: "排期任务", color: "#3b82f6" }, { id: "insert", name: "插入任务", color: "#e5484d" }];
+const TAG_COLORS = ["#3b82f6", "#e5484d", "#22a05a", "#f5b301", "#8b5cf6", "#06b6d4", "#ec4899", "#f97316"];
 const HIDDEN_FILE = "summary-hidden.json"; // task ids kept out of the 今日 / 未排期 lists (their subtasks too)
 const RE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
 const KANBAN = { doing: "进行中", short_term: "短期", long_term: "长期", abandoned: "已放弃", stalled: "已停滞", completed: "已完成" };
@@ -336,6 +340,7 @@ class GanttView {
     this.fold = new Set();
     try { JSON.parse(lsGet("tg-fold", "[]")).forEach((x) => this.fold.add(x)); } catch (e) { /* ignore */ }
     this.labelW = Math.min(LABEL_MAX, Math.max(LABEL_MIN, Number(lsGet("tg-labelw", LABEL_DEF)) || LABEL_DEF));
+    this.tagFilter = ""; // chart filtered to one tag id (per-open)
     this.q = ""; // title search / status filter are per-open, not remembered
     this.status = "all";
     this.toast = h("div", { class: "tg-toast", style: "display:none" });
@@ -407,6 +412,7 @@ class GanttView {
       this.projects = await host.loadProjectData(true);
       await this.plugin.loadLog();
       await this.plugin.loadHidden();
+      await this.plugin.loadTags();
     } catch (e) {
       this.el.replaceChildren(h("div", { class: "tg-empty" }, "读取任务数据失败：" + e));
       return;
@@ -438,9 +444,10 @@ class GanttView {
     // filter: title search + status; a node is kept when it or any descendant passes
     const q = this.q.trim().toLowerCase(), today = model.today;
     const wk0 = alignMonday(today), wk1 = wk0 + 6;
-    const filtering = !!q || this.status !== "all";
+    const filtering = !!q || this.status !== "all" || !!this.tagFilter;
     const pass = (n) => {
       if (q && !String(n.t.title || "").toLowerCase().includes(q)) return false;
+      if (this.tagFilter && this.plugin.tagOf(n.t).id !== this.tagFilter) return false;
       if (this.status === "all") return true;
       if (n.spanStart == null) return false;
       const st = this.stateOf(n);
@@ -629,6 +636,62 @@ class GanttView {
     return r;
   }
 
+  // open leaf tasks per tag (completed and abandoned ones are not counted)
+  tagCounts() {
+    const all = Object.values(this.reminders || {}).filter((t) => t && typeof t === "object" && t.id);
+    const hasKid = new Set(all.filter((t) => t.parentId).map((t) => t.parentId));
+    const out = new Map((this.plugin.tags || DEFAULT_TAGS).map((x) => [x.id, 0]));
+    for (const t of all) { if (hasKid.has(t.id) || t.completed || t.kanbanStatus === "abandoned") continue; const id = this.plugin.tagOf(t).id; out.set(id, (out.get(id) || 0) + 1); }
+    return out;
+  }
+
+  tagChips() {
+    const counts = this.tagCounts();
+    const chips = (this.plugin.tags || DEFAULT_TAGS).map((x) => h("button", { class: "tg-chip tg-tagchip" + (this.tagFilter === x.id ? " tg-on" : ""), style: `color:${x.color}`,
+      title: this.tagFilter === x.id ? "取消按该标签筛选" : `只看「${x.name}」（未完成 ${counts.get(x.id) || 0} 个）`,
+      onclick: () => { this.tagFilter = this.tagFilter === x.id ? "" : x.id; this.render(); } },
+      h("i", { class: "tg-tagdot", style: `background:${x.color}` }), h("span", { class: "tg-tagname" }, x.name), h("b", null, String(counts.get(x.id) || 0))));
+    chips.push(h("button", { class: "b3-button b3-button--outline tg-tagmgr", title: "新增、改名、改颜色、删除标签", onclick: () => this.openTags() }, "标签…"));
+    return chips;
+  }
+
+  openTags() {
+    const dlg = new Dialog({ title: "任务类别标签", width: "460px", content: `<div class="b3-dialog__content tg-form"></div><div class="b3-dialog__action"></div>` });
+    const box = dlg.element.querySelector(".tg-form"), act = dlg.element.querySelector(".b3-dialog__action");
+    const save = async (tags) => { try { await this.plugin.saveTags(tags); this.render(); } catch (e) { showMessage("保存失败：" + e, 4000, "error"); } };
+    const draw = () => {
+      const counts = this.tagCounts(), tags = this.plugin.tags || DEFAULT_TAGS;
+      const rows = tags.map((x) => {
+        const color = h("input", { type: "color", value: x.color, class: "tg-tagcolor" });
+        const name = h("input", { class: "b3-text-field fn__flex-1", type: "text", value: x.name });
+        color.addEventListener("change", () => save(this.plugin.tags.map((y) => (y.id === x.id ? { ...y, color: color.value } : y))));
+        name.addEventListener("change", () => { if (!name.value.trim()) { name.value = x.name; return; } save(this.plugin.tags.map((y) => (y.id === x.id ? { ...y, name: name.value } : y))); });
+        const del = x.id === DEFAULT_TAG ? h("span", { class: "tg-meta", title: "默认标签：没设标签的任务都属于它" }, "默认")
+          : h("button", { class: "b3-button b3-button--outline", onclick: async () => {
+            const n = counts.get(x.id) || 0;
+            if (n && !window.confirm(`删除标签「${x.name}」？它的 ${n} 个未完成任务会改回「${this.plugin.tagOf({}).name}」。`)) return;
+            try { await this.plugin.deleteTag(x.id); if (this.tagFilter === x.id) this.tagFilter = ""; await this.reload(); draw(); } catch (e) { showMessage("删除失败：" + e, 4000, "error"); }
+          } }, "删除");
+        return h("div", { class: "tg-tagrow" }, color, name, h("span", { class: "tg-meta" }, `${counts.get(x.id) || 0} 个`), del);
+      });
+      const nColor = h("input", { type: "color", value: TAG_COLORS[tags.length % TAG_COLORS.length], class: "tg-tagcolor" });
+      const nName = h("input", { class: "b3-text-field fn__flex-1", type: "text", placeholder: "新标签名称，例如：紧急插入" });
+      const add = async () => {
+        const nm = nName.value.trim(); if (!nm) { nName.focus(); return; }
+        if (tags.some((y) => y.name === nm)) { showMessage("已有同名标签", 3000, "error"); return; }
+        await save([...tags, { id: "tag_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), name: nm, color: nColor.value }]); draw();
+      };
+      nName.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); add(); } });
+      box.replaceChildren(...rows, h("div", { class: "tg-tagrow tg-tagnew" }, nColor, nName, h("button", { class: "b3-button b3-button--text", onclick: add }, "添加")),
+        h("div", { class: "tg-meta" }, "标签颜色用于进行中任务的条色；未开始（紫）、已停滞（黄）、已完成（绿）仍用状态色，超期的红色尾巴不变。"));
+    };
+    draw();
+    const close = h("button", { class: "b3-button b3-button--text" }, "完成");
+    close.addEventListener("click", () => dlg.destroy());
+    act.append(close);
+    return dlg;
+  }
+
   renderSummary() {
     const { due, late, undated, stalled, marked } = this.focusLists();
     const today = this.model.today, md = (d) => fromNum(d).slice(5);
@@ -640,6 +703,7 @@ class GanttView {
       chip("stalled", "已停滞", stalled.length, stalled.length ? "tg-c-stalled" : "tg-c-undated"),
       marked.length ? chip("hidden", "已隐藏", marked.length, "tg-c-undated") : null,
       late.length ? null : h("span", { class: "tg-ok" }, "无超期任务"));
+    strip.append(h("span", { class: "fn__flex-1" }), ...this.tagChips());
     const wrap = h("div", { class: "tg-focuswrap" }, strip);
     if (!open) return wrap;
     const list = open === "late" ? late : open === "undated" ? undated : open === "stalled" ? stalled : open === "hidden" ? marked : due, isLate = open === "late", isUndated = open === "undated", isStalled = open === "stalled", isHiddenList = open === "hidden";
@@ -672,7 +736,7 @@ class GanttView {
     for (let p = n.parent; p; p = p.parent) if (this.fold.delete(p.id)) changed = true;
     const find = (x, g) => x.id === n.id || x.children.some((c) => find(c, g));
     for (const g of this.model.groups) if (g.roots.some((r) => find(r, g)) && this.fold.delete("g:" + g.id)) changed = true;
-    if (this.q || this.status !== "all") { this.q = ""; this.status = "all"; changed = true; }
+    if (this.q || this.status !== "all" || this.tagFilter) { this.q = ""; this.status = "all"; this.tagFilter = ""; changed = true; }
     if (n.spanStart == null && !this.showUndated) { this.showUndated = true; lsSet("tg-undated", "1"); changed = true; }
     if (changed) { this.saveFold(); this.render(); }
     const row = this.el.querySelector && this.el.querySelector(`[data-id="${n.id}"]`);
@@ -848,6 +912,7 @@ class GanttView {
       row("持续", n.ongoing ? `已持续 ${Math.max(0, today - n.start) + 1} 天` : null),
       row("逾期", overdue, "tg-warn"),
       row("状态", status),
+      row("类别", this.plugin.tagOf(t).name),
       row("优先级", PRIO[t.priority]),
       row("进度", n.children.length ? `${n.doneLeaves}/${n.leaves} 个子任务 · ${Math.round(n.progress * 100)}%` : t.completed ? "100%" : n.progress ? Math.round(n.progress * 100) + "%" : null),
       row("番茄钟", t.pomodoroCount ? `${t.pomodoroCount} 个 · 专注 ${fmtMin(t.focusTime)}` : null),
@@ -872,11 +937,13 @@ class GanttView {
     const projName = this.projects[t.projectId] && this.projects[t.projectId].title;
     const depth = flat ? 0 : n.depth;
     const pending = this.isPending(n, state); // open and not yet started: its own colour
-    const barColor = state === "late" ? STATE_COLOR.open : pending ? STATE_COLOR.pending : color; // overdue is shown by the red tail, not by recoloring the whole bar
+    const tg = this.plugin.tagOf(t);
+    const barColor = pending ? STATE_COLOR.pending : state === "late" || state === "open" ? tg.color : color; // overdue is shown by the red tail, not by recoloring the whole bar
     const doing = state === "open" && n.spanStart != null && n.spanStart <= this.model.today && n.spanEnd >= this.model.today;
     const label = h("div", { class: "tg-label" },
       depth ? h("i", { class: "tg-indent", style: `width:${depth * 16}px` }) : null,
       hasKids ? h("span", { class: "tg-tog", onclick: (e) => { e.stopPropagation(); folded ? this.fold.delete(n.id) : this.fold.add(n.id); this.saveFold(); this.render(); } }, folded ? "▸" : "▾") : h("span", { class: "tg-tog" }),
+      tg.id !== DEFAULT_TAG ? h("i", { class: "tg-tagdot", style: `background:${tg.color}`, title: "类别：" + tg.name }) : null,
       h("span", { class: "tg-title" + (t.completed ? " tg-done" : state === "late" ? " tg-latet" : doing ? " tg-doing" : "") }, (t.completed ? "✓ " : state === "late" ? "! " : "") + (t.title || "(无标题)")),
       n.ongoing ? h("span", { class: "tg-meta" }, "进行中") : null,
       n.kind === "own" || hasKids ? null : h("span", { class: "tg-meta" }, n.kind === "avail" ? "可开始" : n.kind === "deadline" ? "截止" : "未排期"),
@@ -1068,6 +1135,8 @@ class GanttView {
     const prio = sel([["none", "无"], ["low", "低"], ["medium", "中"], ["high", "高"]], edit ? edit.priority || "none" : "none");
     const statuses = edit ? [["doing", "进行中"], ["short_term", "短期"], ["long_term", "长期"], ["stalled", "已停滞"], ["abandoned", "已放弃"]] : [["doing", "进行中"], ["short_term", "短期"], ["long_term", "长期"], ["stalled", "已停滞"]];
     const status = sel(statuses, edit ? edit.kanbanStatus || "doing" : parentRec && statuses.some(([v]) => v === parentRec.kanbanStatus) ? parentRec.kanbanStatus : "doing");
+    const tagList = this.plugin.tags || DEFAULT_TAGS;
+    const tag = sel(tagList.map((x) => [x.id, x.name]), edit ? this.plugin.tagOf(edit).id : parentRec && parentRec.tagId && tagList.some((x) => x.id === parentRec.tagId) ? parentRec.tagId : DEFAULT_TAG);
     const stime = h("input", { class: "b3-text-field fn__block", type: "time", value: edit ? edit.time || "" : "" });
     const etime = h("input", { class: "b3-text-field fn__block", type: "time", value: edit ? edit.endTime || "" : "" });
     const note = h("textarea", { class: "b3-text-field fn__block", rows: "5", placeholder: "备注" });
@@ -1075,7 +1144,7 @@ class GanttView {
     project.addEventListener("change", () => { parentQ.value = ""; pOpen.clear(); fillParents(""); });
     const form = h("div", null, row("标题", title), row("所属项目", project), h("div", { class: "tg-frow" }, h("span", null, "父任务（可选；点 ▸ 展开，点名称选中，也可搜索）"), parentQ, parent, pTree),
       h("div", { class: "tg-fgrid" }, row("开始日期", start), row("结束日期（可留空＝持续进行）", end)),
-      h("div", { class: "tg-fgrid" }, row("优先级", prio), row("状态", status)),
+      h("div", { class: "tg-fgrid" }, row("优先级", prio), row("状态", status)), row("类别标签（颜色见「标签…」）", tag),
       edit ? h("div", { class: "tg-fgrid" }, row("开始时间（可空）", stime), row("结束时间（可空）", etime)) : null,
       edit ? row("备注", note) : null);
     const bCancel = h("button", { class: "b3-button b3-button--cancel" }, "取消");
@@ -1099,7 +1168,7 @@ class GanttView {
         if (start.value && end.value && end.value < start.value) { showMessage("结束日期不能早于开始日期", 3000, "error"); return; }
         busy = true;
         try {
-          await this.plugin.updateTask(edit.id, { title: name, projectId: project.value, parentId: parent.value, date: start.value, endDate: end.value, time: stime.value, endTime: etime.value, note: note.value, priority: prio.value, kanbanStatus: status.value });
+          await this.plugin.updateTask(edit.id, { title: name, projectId: project.value, parentId: parent.value, date: start.value, endDate: end.value, time: stime.value, endTime: etime.value, note: note.value, priority: prio.value, kanbanStatus: status.value, tagId: tag.value });
           dlg.destroy();
           this.say(`已保存「${name}」`, true);
         } catch (err) { busy = false; showMessage("保存失败：" + err, 5000, "error"); }
@@ -1109,7 +1178,7 @@ class GanttView {
       if (end.value && (!RE_DATE.test(end.value) || end.value < start.value)) { showMessage("结束日期不能早于开始日期", 3000, "error"); return; }
       busy = true;
       try {
-        const rec = await this.plugin.createTask({ title: name, date: start.value, endDate: end.value || undefined, projectId: project.value, parentId: parent.value || undefined, priority: prio.value, kanbanStatus: status.value });
+        const rec = await this.plugin.createTask({ title: name, date: start.value, endDate: end.value || undefined, projectId: project.value, parentId: parent.value || undefined, priority: prio.value, kanbanStatus: status.value, tagId: tag.value });
         dlg.destroy();
         this.say(`已新建「${name}」（${rec.date}${rec.endDate ? " ~ " + rec.endDate : ""}）`, true);
         if (thenEdit) this.editTask(rec);
@@ -1120,7 +1189,7 @@ class GanttView {
     bEdit.addEventListener("click", () => submit(true));
     title.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(false); } });
     setTimeout(() => title.focus(), 50);
-    return { ctl: { title, project, parent, parentQ, pTree, start, end, prio, status, stime, etime, note }, submit };
+    return { ctl: { title, project, parent, parentQ, pTree, start, end, prio, status, tag, stime, etime, note }, submit };
   }
 
   newTask(preset) { return this.openCreate(preset); }
@@ -1716,6 +1785,7 @@ class ProjectsView {
       this.projects = await this.host.loadProjectData(true);
       await this.plugin.loadLog();
       await this.plugin.loadHidden();
+      await this.plugin.loadTags();
     } catch (e) {
       this.el.replaceChildren(h("div", { class: "tg-empty" }, "读取任务数据失败：" + e));
       return;
@@ -1943,6 +2013,8 @@ class ProjectsView {
       h("div", { class: "tp-tasks" }, rows.length ? rows : h("div", { class: "tp-dim tp-none" }, all.length ? "没有未完成的任务。" : "这里还没有任务。在上面输入标题回车即可添加。")));
   }
 
+  tagPill(tg) { const el = this.pill(tg.name, "tp-b-tag"); el.style.cssText = `background:color-mix(in srgb, ${tg.color} 18%, transparent);color:${tg.color}`; return el; }
+
   taskRow(t, depth, nSub, folded, today, hid) {
     const kind = focusKind(t, today);
     const badge = t.completed ? null : kind === "late" ? this.pill(`超期 ${today - toNum(t.endDate)} 天`, "tp-b-late") : kind === "today" ? this.pill("今日", "tp-b-today") : null;
@@ -1955,6 +2027,7 @@ class ProjectsView {
       tog, box,
       h("span", { class: "tp-rt", title: "编辑任务", onclick: () => this.editTask(t) }, t.title || "(无标题)"),
       hid.has(t.id) ? this.pill("已隐藏", "tp-dim-pill") : null,
+      this.plugin.tagOf(t).id !== DEFAULT_TAG ? this.tagPill(this.plugin.tagOf(t)) : null,
       TASK_STATUS[t.kanbanStatus] && t.kanbanStatus !== "doing" ? this.pill(TASK_STATUS[t.kanbanStatus], t.kanbanStatus === "stalled" ? "tp-b-stall" : "tp-b-st") : null,
       badge, prog ? h("span", { class: "tp-dim", title: "成果记录条数" }, `◆${prog}`) : null,
       h("span", { class: "fn__flex-1" }),
@@ -2288,7 +2361,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     } catch (err) { this.undoStack.push(e); throw err; }
   }
 
-  async createTask({ title, date, endDate, projectId, parentId, priority, kanbanStatus }) {
+  async createTask({ title, date, endDate, projectId, parentId, priority, kanbanStatus, tagId }) {
     const host = this.getHost();
     if (!title || !RE_DATE.test(date) || (endDate && !RE_DATE.test(endDate))) throw new Error("标题或日期无效");
     const data = await host.loadReminderData(true);
@@ -2302,6 +2375,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     const sort = sibs.reduce((m, x) => Math.max(m, Number(x.sort) || 0), 0) + 1000;
     const rec = { id, title, completed: false, priority: priority || "none", createdAt: new Date().toISOString(), kanbanStatus: kanbanStatus || (parent && parent.kanbanStatus) || "doing", sort, date };
     if (endDate && endDate >= date) rec.endDate = endDate;
+    if (tagId && tagId !== DEFAULT_TAG) rec.tagId = tagId;
     if (pid) rec.projectId = pid;
     if (parentId) rec.parentId = parentId;
     data[id] = rec;
@@ -2336,6 +2410,7 @@ module.exports = class TaskGanttPlugin extends Plugin {
     set(t, "note", f.note || "");
     if (f.priority && f.priority !== "none") t.priority = f.priority; else delete t.priority;
     if (f.kanbanStatus) t.kanbanStatus = f.kanbanStatus;
+    if (f.tagId !== undefined) set(t, "tagId", f.tagId && f.tagId !== DEFAULT_TAG ? f.tagId : "");
     set(t, "parentId", parentId); set(t, "parentTitle", parent ? parent.title : "");
     const pid = parent ? parent.projectId || "" : f.projectId || "";
     const moved = (t.projectId || "") !== pid;
@@ -2469,6 +2544,42 @@ module.exports = class TaskGanttPlugin extends Plugin {
     try { d = await this.loadData(HIDDEN_FILE); } catch (e) { /* first run */ }
     this.hidden = new Set(d && Array.isArray(d.ids) ? d.ids.filter((x) => typeof x === "string") : []);
     return this.hidden;
+  }
+
+  async loadTags() {
+    let d = null;
+    try { d = await this.loadData(TAG_FILE); } catch (e) { /* first run */ }
+    const list = d && Array.isArray(d.tags) ? d.tags.filter((x) => x && typeof x.id === "string" && typeof x.name === "string" && /^#[0-9a-fA-F]{6}$/.test(x.color || "")) : [];
+    if (!list.some((x) => x.id === DEFAULT_TAG)) list.unshift({ ...DEFAULT_TAGS[0] });
+    if (!d) list.push({ ...DEFAULT_TAGS[1] });
+    this.tags = list.map((x) => ({ id: x.id, name: x.name, color: x.color }));
+    return this.tags;
+  }
+
+  async saveTags(tags) {
+    const clean = tags.map((x) => ({ id: x.id, name: String(x.name || "").trim() || "未命名", color: /^#[0-9a-fA-F]{6}$/.test(x.color) ? x.color : "#3b82f6" }));
+    this.tags = clean;
+    await this.saveData(TAG_FILE, { tags: clean });
+    return clean;
+  }
+
+  // the tag of a task; an unknown or missing tagId falls back to the default tag
+  tagOf(t) {
+    const list = this.tags || DEFAULT_TAGS;
+    return list.find((x) => x.id === (t && t.tagId)) || list.find((x) => x.id === DEFAULT_TAG) || DEFAULT_TAGS[0];
+  }
+
+  // Delete a tag: its tasks go back to the default tag.
+  async deleteTag(id) {
+    if (id === DEFAULT_TAG) throw new Error("默认标签不能删除");
+    const host = this.getHost();
+    const data = await host.loadReminderData(true);
+    let n = 0;
+    for (const t of Object.values(data || {})) if (t && t.tagId === id) { delete t.tagId; n++; }
+    if (n) await host.saveReminderData(data);
+    await this.saveTags((this.tags || []).filter((x) => x.id !== id));
+    window.dispatchEvent(new CustomEvent("reminderUpdated"));
+    return n;
   }
 
   async setHidden(id, on) {

@@ -32,6 +32,13 @@ A Gantt chart and project pages for your tasks inside SiYuan: group tasks by pro
 
 Hover a bar or a title for a card with project, dates, status, progress and the latest results.
 
+### Task tags
+
+Each task can carry one category tag. Built in: "排期任务" (blue, the default) and "插入任务" (red). Use "标签…" at the right of the summary strip to add, rename, recolour or delete tags (the default cannot be deleted; tasks of a deleted tag go back to it). Pick the tag when creating or editing a task.
+
+- An open task's bar takes the tag colour and gets a dot before its title; not-started (purple), stalled (yellow) and done (green) keep their state colours, and the overdue tail stays red.
+- The strip shows each tag with its open leaf-task count; click one to filter the chart, click again to clear.
+
 ### Today / overdue / unscheduled strip
 
 Under the toolbar: `Today N`, `Overdue N`, `Unscheduled N`, `Stalled N`. Click one to open its list; click a title to jump to the task on the chart; each row has "Log progress", "Done" (and "Schedule for today" for unscheduled tasks).

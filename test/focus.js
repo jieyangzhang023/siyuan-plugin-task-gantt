@@ -59,7 +59,7 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
 
   // strip + panel
   v.sumOpen = ""; v.render();
-  ok(count(v.el, "tg-chip") === 4 && count(v.el, "tg-fitem") === 0, "strip shows four chips, no list when closed");
+  ok(count(v.el, "tg-chip") === 6 && count(v.el, "tg-fitem") === 0, "strip shows four state chips + two tag chips, no list when closed");
   v.sumOpen = "late"; v.render(); ok(count(v.el, "tg-fitem") === late.length, "late list rows: " + count(v.el, "tg-fitem"));
   v.sumOpen = "today"; v.render(); ok(count(v.el, "tg-fitem") === due.length, "today list rows: " + count(v.el, "tg-fitem"));
   v.sumOpen = "undated"; v.render(); ok(count(v.el, "tg-fitem") === 1, "undated list rows: " + count(v.el, "tg-fitem"));
@@ -96,7 +96,7 @@ const plugin = new Plugin(); plugin.own = host; plugin.undoStack = [];
   ok(fl.late.some((n) => n.id === "PL"), "hidden: overdue child is still listed");
   ok(fl.marked.length === 1 && fl.marked[0].id === "P", "marked list has the task");
   ok(plugin.store["summary-hidden.json"].ids.join() === "P", "persisted via saveData");
-  v.sumOpen = ""; v.render(); ok(count(v.el, "tg-chip") === 5, "hidden chip appears");
+  v.sumOpen = ""; v.render(); ok(count(v.el, "tg-chip") === 7, "hidden chip appears");
   v.sumOpen = "hidden"; v.render(); ok(count(v.el, "tg-fitem") === 1, "hidden list shows the marked task");
   menus.length = 0; v.taskMenu({ preventDefault() {}, target: {}, clientX: 0, clientY: 0 }, pn);
   ok(menus[0].items.includes("恢复在摘要中显示"), "menu offers restore");
